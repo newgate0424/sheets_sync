@@ -665,7 +665,8 @@ class SyncService {
         SELECT 
           COUNT(*) as total_configs,
           SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active_configs,
-          SUM(row_count) as total_rows
+          SUM(row_count) as total_rows,
+          MAX(last_sync_at) as last_global_sync
         FROM sync_configs
       `);
 
@@ -677,13 +678,24 @@ class SyncService {
         LIMIT 10
       `);
 
+      const statsResult = (stats as any[])[0];
+      
       return {
-        stats: (stats as any[])[0],
+        total_configs: statsResult.total_configs || 0,
+        active_configs: statsResult.active_configs || 0,
+        total_rows: statsResult.total_rows || 0,
+        last_global_sync: statsResult.last_global_sync,
         recentLogs: recentLogs as any[]
       };
     } catch (error) {
       console.error('Error fetching sync stats:', error);
-      return { stats: {}, recentLogs: [] };
+      return { 
+        total_configs: 0,
+        active_configs: 0,
+        total_rows: 0,
+        last_global_sync: null,
+        recentLogs: [] 
+      };
     }
   }
 }

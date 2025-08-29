@@ -73,7 +73,7 @@ export default function Dashboard() {
       if (statsRes.ok) {
         const statsData = await statsRes.json();
         setStats(statsData);
-        setLogs(Array.isArray(statsData.recent_activity) ? statsData.recent_activity : []);
+        setLogs(Array.isArray(statsData.recentLogs) ? statsData.recentLogs : []);
       }
 
       await Promise.all([
