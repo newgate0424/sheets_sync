@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Smart Delta Sync Test</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 p-8">
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-3xl font-bold text-center mb-8">🧠 Smart Delta Sync Test</h1>
+        
+        <div class="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">API Test Controls</h2>
+            
+            <div class="space-y-4">
+                <div>
+                    <button id="testInfo" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+                        Test GET /api/sync/smart (Info)
+                    </button>
+                </div>
+                
+                <div>
+                    <button id="testSingle" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">
+                        Test Smart Sync Config 2 (Single Mode)
+                    </button>
+                </div>
+                
+                <div>
+                    <button id="testBulk" class="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600">
+                        Test Smart Sync All Configs (Bulk Mode)
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-xl font-semibold mb-4">API Response</h2>
+            <pre id="result" class="bg-gray-100 p-4 rounded text-sm overflow-auto max-h-96"></pre>
+        </div>
+    </div>
+
+    <script>
+        const resultEl = document.getElementById('result');
+        
+        function showResult(title, data) {
+            resultEl.textContent = `=== ${title} ===\n${JSON.stringify(data, null, 2)}`;
+        }
+        
+        function showError(title, error) {
+            resultEl.textContent = `=== ${title} - ERROR ===\n${error.toString()}`;
+        }
+
+        // Test GET endpoint
+        document.getElementById('testInfo').onclick = async function() {
+            try {
+                const response = await fetch('/api/sync/smart', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                const data = await response.json();
+                showResult('Smart Sync Info (GET)', data);
+            } catch (error) {
+                showError('Smart Sync Info (GET)', error);
+            }
+        };
+
+        // Test single smart sync
+        document.getElementById('testSingle').onclick = async function() {
+            try {
+                const response = await fetch('/api/sync/smart', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        configIds: [2],
+                        mode: 'single'
+                    })
+                });
+                const data = await response.json();
+                showResult('Smart Sync Config 2 (Single)', data);
+            } catch (error) {
+                showError('Smart Sync Config 2 (Single)', error);
+            }
+        };
+
+        // Test bulk smart sync
+        document.getElementById('testBulk').onclick = async function() {
+            try {
+                const response = await fetch('/api/sync/smart', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        configIds: [2, 3],
+                        mode: 'bulk'
+                    })
+                });
+                const data = await response.json();
+                showResult('Smart Sync Bulk Mode', data);
+            } catch (error) {
+                showError('Smart Sync Bulk Mode', error);
+            }
+        };
+    </script>
+</body>
+</html>
