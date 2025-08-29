@@ -128,7 +128,11 @@ export default function Dashboard() {
       const response = await fetch('/api/sync/realtime', { cache: 'no-store' });
       if (response.ok) {
         const data = await response.json();
-        setRealtimeStatus(data);
+        setRealtimeStatus({
+          active: data.activeJobs > 0,
+          activeConfigs: data.activeJobs,
+          lastActivity: new Date().toISOString()
+        });
       }
     } catch (error) {
       console.error('Error checking realtime status:', error);
@@ -137,10 +141,24 @@ export default function Dashboard() {
 
   const checkSmartAutoPilot = async () => {
     try {
+      console.log('Checking Smart Auto-Pilot status...');
       const response = await fetch('/api/smart-auto', { cache: 'no-store' });
       if (response.ok) {
         const data = await response.json();
-        setSmartAutoPilot(data);
+        console.log('Smart Auto-Pilot API response:', data);
+        
+        setSmartAutoPilot({
+          active: data.data?.smartSyncEnabled || false,
+          totalConfigs: data.data?.totalConfigs || 0,
+          activeConfigs: data.data?.activeConfigs || 0,
+          lastActivity: new Date().toISOString()
+        });
+        
+        console.log('Smart Auto-Pilot state updated:', {
+          active: data.data?.smartSyncEnabled || false,
+          totalConfigs: data.data?.totalConfigs || 0,
+          activeConfigs: data.data?.activeConfigs || 0
+        });
       }
     } catch (error) {
       console.error('Error checking smart auto-pilot:', error);
@@ -184,6 +202,67 @@ export default function Dashboard() {
       console.error('Error running sync all:', error);
     } finally {
       setSyncing(null);
+    }
+  };
+
+  const toggleRealtimeSync = async () => {
+    try {
+      const response = await fetch('/api/sync/realtime', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: realtimeStatus?.active ? 'stop' : 'start' })
+      });
+
+      if (response.ok) {
+        await checkRealtimeStatus();
+      }
+    } catch (error) {
+      console.error('Error toggling realtime sync:', error);
+    }
+  };
+
+  const toggleSmartAutoPilot = async () => {
+    try {
+      const action = smartAutoPilot?.active ? 'disable' : 'enable';
+      console.log(`Toggling Smart Auto-Pilot: ${action}`);
+      
+      const response = await fetch('/api/smart-auto', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Smart Auto-Pilot toggle result:', result);
+        await checkSmartAutoPilot();
+      } else {
+        console.error('Failed to toggle Smart Auto-Pilot:', response.status);
+      }
+    } catch (error) {
+      console.error('Error toggling smart auto-pilot:', error);
+    }
+  };
+
+  const deleteConfig = async (configId: number, configName: string) => {
+    if (!confirm(`คุณแน่ใจหรือไม่ที่จะลบการตั้งค่า "${configName}"?\n\nการดำเนินการนี้จะลบ:\n- การตั้งค่า sync\n- ข้อมูล sync logs\n- ตาราง MySQL ที่เกี่ยวข้อง\n\nและไม่สามารถยกเลิกได้`)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/sync-configs/${configId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        loadData(); // Reload configurations
+      } else {
+        const error = await response.json();
+        alert(`ไม่สามารถลบการตั้งค่าได้: ${error.message}`);
+      }
+    } catch (error) {
+      console.error('Error deleting config:', error);
+      alert('เกิดข้อผิดพลาดในการลบการตั้งค่า');
     }
   };
 
@@ -355,7 +434,7 @@ export default function Dashboard() {
             </div>
             
             <div className="p-6">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4 mb-4">
                 <div className="text-center">
                   <p className="text-2xl font-bold text-blue-600">{realtimeStatus?.activeConfigs || 0}</p>
                   <p className="text-sm text-gray-600">Active Configs</p>
@@ -366,6 +445,18 @@ export default function Dashboard() {
                   </p>
                   <p className="text-sm text-gray-600">Last Activity</p>
                 </div>
+              </div>
+              
+              <div className="flex justify-center">
+                <Button
+                  onClick={toggleRealtimeSync}
+                  className={realtimeStatus?.active ? 
+                    "bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-700 hover:to-pink-700" :
+                    "bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
+                  }
+                >
+                  {realtimeStatus?.active ? 'Stop Real-time Sync' : 'Start Real-time Sync'}
+                </Button>
               </div>
             </div>
           </div>
@@ -393,7 +484,7 @@ export default function Dashboard() {
             </div>
             
             <div className="p-6">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4 mb-4">
                 <div className="text-center">
                   <p className="text-2xl font-bold text-purple-600">{smartAutoPilot?.activeConfigs || 0}</p>
                   <p className="text-sm text-gray-600">Managed Configs</p>
@@ -404,6 +495,18 @@ export default function Dashboard() {
                   </p>
                   <p className="text-sm text-gray-600">Last Activity</p>
                 </div>
+              </div>
+              
+              <div className="flex justify-center">
+                <Button
+                  onClick={toggleSmartAutoPilot}
+                  className={smartAutoPilot?.active ? 
+                    "bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-700 hover:to-pink-700" :
+                    "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
+                  }
+                >
+                  {smartAutoPilot?.active ? 'Stop Smart Auto-Pilot' : 'Start Smart Auto-Pilot'}
+                </Button>
               </div>
             </div>
           </div>
@@ -483,7 +586,7 @@ export default function Dashboard() {
                             size="sm"
                             variant="outline"
                             className="p-2 text-purple-600 hover:bg-purple-50 hover:border-purple-300"
-                            onClick={() => router.push(`/data/${config.id}`)}
+                            onClick={() => router.push(`/data?configId=${config.id}`)}
                             title="ดูข้อมูลในตาราง"
                           >
                             <Eye className="h-4 w-4" />
@@ -513,6 +616,16 @@ export default function Dashboard() {
                             ) : (
                               <Zap className="h-4 w-4" />
                             )}
+                          </Button>
+
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="p-2 text-red-600 hover:bg-red-50 hover:border-red-300"
+                            onClick={() => deleteConfig(config.id, config.name)}
+                            title="ลบการตั้งค่า"
+                          >
+                            <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
                       </div>

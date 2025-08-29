@@ -12,6 +12,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         message: 'Smart Auto-Pilot status retrieved successfully',
         data: {
           ...stats,
+          smartSyncEnabled: stats.smartSyncEnabled,
+          totalConfigs: stats.activeSyncJobs,
+          activeConfigs: stats.activeSyncJobs,
           status: stats.smartSyncEnabled ? '🧠 SMART AUTO-PILOT ACTIVE' : '📊 STANDARD AUTO-PILOT',
           description: stats.smartSyncEnabled 
             ? 'ระบบ Smart Auto-Pilot กำลังทำงานอย่างมีประสิทธิภาพ ใช้ Smart Delta Sync เพื่อประหยัด 70-80% ของทรัพยากร'
@@ -32,11 +35,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       if (action === 'enable') {
         realTimeSync.enableSmartSync();
+        // เริ่ม sync jobs หากยังไม่ได้เริ่ม
+        await realTimeSync.initialize();
+        
         res.status(200).json({
           success: true,
           message: '🚀 Smart Auto-Pilot ENABLED! ระบบจะซิงค์แบบอัจฉริยะอัตโนมัติ',
           data: {
             smartSyncEnabled: true,
+            totalConfigs: realTimeSync.getSmartSyncStats().activeSyncJobs,
+            activeConfigs: realTimeSync.getSmartSyncStats().activeSyncJobs,
             status: '🧠 SMART AUTO-PILOT ACTIVE',
             description: 'Smart Delta Sync ทำงานอัตโนมัติ - ประหยัดทรัพยากร 70-80%',
             effect: 'ประหยัดทรัพยากร 70-80%, ซิงค์เฉพาะที่เปลี่ยนแปลง',
@@ -45,11 +53,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
       } else if (action === 'disable') {
         realTimeSync.disableSmartSync();
+        
         res.status(200).json({
           success: true,
           message: '📊 Switched to Standard Auto-Pilot - เช็คทุกแถวทุกครั้ง',
           data: {
             smartSyncEnabled: false,
+            totalConfigs: realTimeSync.getSmartSyncStats().activeSyncJobs,
+            activeConfigs: realTimeSync.getSmartSyncStats().activeSyncJobs,
             status: '📊 STANDARD AUTO-PILOT',
             description: 'Standard incremental sync ทำงานอัตโนมัติ - เช็คทุกแถวทุกครั้ง',
             effect: 'ใช้ทรัพยากรมากขึ้น แต่แน่ใจได้ว่าถูกต้อง',
@@ -59,11 +70,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       } else if (action === 'restart') {
         // Restart ระบบ real-time sync
         console.log('Restarting Smart Auto-Pilot system...');
+        realTimeSync.stopAllJobs();
         await realTimeSync.initialize();
+        
         res.status(200).json({
           success: true,
           message: '🔄 Smart Auto-Pilot system restarted successfully!',
-          data: realTimeSync.getSmartSyncStats()
+          data: {
+            ...realTimeSync.getSmartSyncStats(),
+            totalConfigs: realTimeSync.getSmartSyncStats().activeSyncJobs,
+            activeConfigs: realTimeSync.getSmartSyncStats().activeSyncJobs
+          }
         });
       } else {
         res.status(400).json({
