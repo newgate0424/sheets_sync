@@ -165,12 +165,13 @@ export default function Dashboard() {
     }
   };
 
-  const runSync = async (configId: number) => {
+  const runSync = async (configId: number, fullSync: boolean = false) => {
     setSyncing(configId);
     try {
       const response = await fetch(`/api/sync/${configId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fullSync })
       });
 
       if (response.ok) {
@@ -185,12 +186,13 @@ export default function Dashboard() {
     }
   };
 
-  const runAllSync = async () => {
+  const runAllSync = async (fullSync: boolean = false) => {
     setSyncing(-1);
     try {
       const response = await fetch('/api/sync/all', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fullSync })
       });
 
       if (response.ok) {
@@ -528,7 +530,7 @@ export default function Dashboard() {
                 </div>
                 
                 <Button
-                  onClick={runAllSync}
+                  onClick={() => runAllSync(false)}
                   disabled={syncing === -1}
                   className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
                 >
@@ -537,7 +539,20 @@ export default function Dashboard() {
                   ) : (
                     <Zap className="h-4 w-4 mr-2" />
                   )}
-                  Sync All
+                  Sync All (⚡)
+                </Button>
+                
+                <Button
+                  onClick={() => runAllSync(true)}
+                  disabled={syncing === -1}
+                  className="bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700"
+                >
+                  {syncing === -1 ? (
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Database className="h-4 w-4 mr-2" />
+                  )}
+                  Full Sync All (📊)
                 </Button>
               </div>
               
@@ -607,14 +622,29 @@ export default function Dashboard() {
                             size="sm"
                             variant="outline"
                             className="p-2 text-green-600 hover:bg-green-50 hover:border-green-300"
-                            onClick={() => runSync(config.id)}
+                            onClick={() => runSync(config.id, false)}
                             disabled={syncing === config.id}
-                            title="เริ่ม Sync"
+                            title="เริ่ม Incremental Sync (เฉพาะที่เปลี่ยนแปลง)"
                           >
                             {syncing === config.id ? (
                               <RefreshCw className="h-4 w-4 animate-spin" />
                             ) : (
                               <Zap className="h-4 w-4" />
+                            )}
+                          </Button>
+
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="p-2 text-orange-600 hover:bg-orange-50 hover:border-orange-300"
+                            onClick={() => runSync(config.id, true)}
+                            disabled={syncing === config.id}
+                            title="เริ่ม Full Sync (ทำให้ตรงกับ Google Sheets 100%)"
+                          >
+                            {syncing === config.id ? (
+                              <RefreshCw className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <BarChart3 className="h-4 w-4" />
                             )}
                           </Button>
 

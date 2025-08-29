@@ -19,6 +19,7 @@
     "autoprefixer": "^10.0.1",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
+    "dotenv": "^17.2.1",
     "googleapis": "^128.0.0",
     "lucide-react": "^0.263.1",
     "mysql2": "^3.6.5",

@@ -29,7 +29,7 @@ interface TableData {
   tableName: string;
   totalRows: number;
   columns: string[];
-  data: any[];
+  rows: any[];  // เปลี่ยนจาก data เป็น rows
   currentPage: number;
   totalPages: number;
   pageSize: number;
@@ -102,13 +102,13 @@ export default function DataViewPage() {
     
     try {
       const response = await fetch(`/api/data/view?configId=${configId}&page=${page}&pageSize=${pageSize}`);
-      const data = await response.json();
+      const result = await response.json();
       
-      if (response.ok) {
-        setTableData(data);
+      if (response.ok && result.success) {
+        setTableData(result.data);
         setCurrentPage(page);
       } else {
-        setError(data.message || 'Failed to fetch table data');
+        setError(result.message || 'Failed to fetch table data');
         setTableData(null);
       }
     } catch (error) {
@@ -199,7 +199,7 @@ export default function DataViewPage() {
     return String(value);
   };
 
-  const filteredData = tableData?.data.filter(row =>
+  const filteredData = tableData?.rows.filter(row =>
     tableData.columns.some(column =>
       String(row[column] || '').toLowerCase().includes(searchTerm.toLowerCase())
     )

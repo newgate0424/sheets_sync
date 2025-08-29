@@ -16,7 +16,7 @@ class SyncService {
   async getAllSyncConfigs(): Promise<SyncConfig[]> {
     try {
       const [rows] = await pool.execute(`
-        SELECT * FROM sync_configs WHERE is_active = true ORDER BY created_at DESC
+        SELECT * FROM sync_configs WHERE is_active = 1 ORDER BY created_at DESC
       `);
       return rows as SyncConfig[];
     } catch (error) {
@@ -318,6 +318,8 @@ class SyncService {
     // ต่อด้วย standard sync logic เดิม
     let connection;
     try {
+      console.log(`\n=== INCREMENTAL SYNC CONFIG ${configId} ===`);
+      
       // ดึงการตั้งค่า
       const [configs] = await pool.execute(`
         SELECT * FROM sync_configs WHERE id = ?
@@ -328,6 +330,7 @@ class SyncService {
       }
 
       const config = (configs as any[])[0];
+      console.log(`Syncing: ${config.name}`);
       
       // ตรวจสอบความถูกต้องของ column mapping
       const columnsData = typeof config.columns === 'string' 
@@ -348,8 +351,11 @@ class SyncService {
       const sheetData = await googleSheetsService.getSheetData(config.sheet_url, config.sheet_name);
       
       if (sheetData.length === 0) {
+        console.log('No data in Google Sheets');
         return { success: true, message: 'No data to sync', rowsSynced: 0 };
       }
+
+      console.log(`Fetched ${sheetData.length} rows from Google Sheets`);
 
       // แปลงข้อมูลโดยใช้ method ใหม่ที่ป้องกัน type mismatch
       // เนื่องจาก getSheetData ส่งคืนเป็น object ให้เราแปลงข้อมูลเองที่นี่
@@ -361,6 +367,8 @@ class SyncService {
         });
         return convertedRow;
       });
+
+      console.log(`Transformed ${transformedData.length} rows for database`);
 
       // เริ่ม transaction
       connection = await pool.getConnection();
@@ -374,6 +382,8 @@ class SyncService {
         SELECT id, sheet_row_index, row_hash FROM \`${config.table_name}\`
       `);
       const existingData = existingRows as any[];
+
+      console.log(`Found ${existingData.length} existing rows in database`);
 
       // สร้าง Map สำหรับเปรียบเทียบ
       const existingByRowIndex = new Map();
@@ -408,13 +418,11 @@ class SyncService {
           WHERE sheet_row_index = ?
         `;
 
-        console.log('Insert SQL:', insertSQL);
-        console.log('Update SQL:', updateSQL);
-
-        const currentHashes = new Set();
+        const currentRowIndices = new Set();
 
         for (const [index, row] of transformedData.entries()) {
           const sheetRowIndex = index + 2; // +2 เพราะ header = row 1, data เริ่ม row 2
+          currentRowIndices.add(sheetRowIndex);
           
           // สร้าง values โดยใช้ข้อมูลที่แปลงแล้ว
           const values = columns.map(col => {
@@ -430,10 +438,6 @@ class SyncService {
 
           // สร้าง hash จากข้อมูลแถวที่ normalized
           const rowHash = this.createRowHash(normalizedValues);
-          currentHashes.add(rowHash);
-
-          console.log(`Processing row ${sheetRowIndex}:`, values);
-          console.log(`Row hash: ${rowHash}`);
 
           const existingRow = existingByRowIndex.get(sheetRowIndex);
 
@@ -444,20 +448,19 @@ class SyncService {
               try {
                 await connection.execute(updateSQL, [...values, rowHash, sheetRowIndex]);
                 rowsUpdated++;
-                console.log(`Updated row ${sheetRowIndex}`);
+                console.log(`Updated row at sheet index ${sheetRowIndex}`);
               } catch (updateError) {
                 console.error(`Error updating row ${sheetRowIndex}:`, updateError);
                 throw updateError;
               }
-            } else {
-              console.log(`Row ${sheetRowIndex} unchanged`);
             }
+            // ถ้าไม่เปลี่ยนแปลง ก็ไม่ต้องทำอะไร (unchanged)
           } else {
             // แถวใหม่ - insert
             try {
               await connection.execute(insertSQL, [...values, sheetRowIndex, rowHash]);
               rowsInserted++;
-              console.log(`Inserted new row ${sheetRowIndex}`);
+              console.log(`Inserted new row at sheet index ${sheetRowIndex}`);
             } catch (insertError) {
               console.error(`Error inserting row ${sheetRowIndex}:`, insertError);
               console.error('Values:', values);
@@ -466,28 +469,31 @@ class SyncService {
           }
         }
 
-        // ลบแถวที่ไม่มีใน Google Sheets แล้ว (รวมแถวที่ sheet_row_index = null)
-        const currentRowIndices = new Set(transformedData.map((_, index) => index + 2));
-        
-        // ลบแถวที่มี sheet_row_index แต่ไม่มีใน Google Sheets
-        const rowsToDeleteWithIndex = existingData.filter(row => 
+        // ลบแถวที่ไม่มีใน Google Sheets แล้ว (เฉพาะแถวที่มี sheet_row_index ที่ถูกต้อง)
+        const rowsToDelete = existingData.filter(row => 
           row.sheet_row_index !== null && !currentRowIndices.has(row.sheet_row_index)
         );
 
-        // ลบแถวที่ sheet_row_index = null (แถวที่เหลือจากการ sync ก่อนหน้า)
+        // ลบแถวที่ orphaned (sheet_row_index = null) 
         const orphanedRows = existingData.filter(row => row.sheet_row_index === null);
 
-        const allRowsToDelete = [...rowsToDeleteWithIndex, ...orphanedRows];
-
-        if (allRowsToDelete.length > 0) {
+        if (rowsToDelete.length > 0) {
+          console.log(`Deleting ${rowsToDelete.length} rows that no longer exist in Google Sheets`);
           const deleteSQL = `DELETE FROM \`${config.table_name}\` WHERE id = ?`;
-          for (const rowToDelete of allRowsToDelete) {
+          for (const rowToDelete of rowsToDelete) {
             await connection.execute(deleteSQL, [rowToDelete.id]);
             rowsDeleted++;
-            const reason = rowToDelete.sheet_row_index === null ? 
-              'orphaned row (null index)' : 
-              `missing from sheet (was row ${rowToDelete.sheet_row_index})`;
-            console.log(`Deleted row with id ${rowToDelete.id}: ${reason}`);
+            console.log(`Deleted row at sheet index ${rowToDelete.sheet_row_index}`);
+          }
+        }
+
+        if (orphanedRows.length > 0) {
+          console.log(`Deleting ${orphanedRows.length} orphaned rows`);
+          const deleteSQL = `DELETE FROM \`${config.table_name}\` WHERE id = ?`;
+          for (const orphanedRow of orphanedRows) {
+            await connection.execute(deleteSQL, [orphanedRow.id]);
+            rowsDeleted++;
+            console.log(`Deleted row at sheet index ${orphanedRow.sheet_row_index}`);
           }
         }
       }
@@ -508,6 +514,16 @@ class SyncService {
 
       await connection.commit();
 
+      console.log(`Incremental sync completed: {
+  totalRows: ${transformedData.length},
+  insertedRows: ${rowsInserted},
+  updatedRows: ${rowsUpdated},
+  deletedRows: ${rowsDeleted},
+  unchangedRows: ${transformedData.length - rowsInserted - rowsUpdated}
+}`);
+
+      console.log(`[Config ${configId}] Changes detected: +${rowsInserted} ~${rowsUpdated} -${rowsDeleted}`);
+
       return {
         success: true,
         message: message,
@@ -520,6 +536,160 @@ class SyncService {
       }
       
       console.error('Error syncing data:', error);
+      
+      // บันทึก error log
+      try {
+        await pool.execute(`
+          INSERT INTO sync_logs (config_id, status, message, rows_synced)
+          VALUES (?, 'error', ?, 0)
+        `, [configId, (error as Error).message]);
+      } catch (logError) {
+        console.error('Error logging sync error:', logError);
+      }
+
+      return {
+        success: false,
+        message: (error as Error).message,
+        rowsSynced: 0
+      };
+    } finally {
+      if (connection) {
+        connection.release();
+      }
+    }
+  }
+
+  // ทำการ sync แบบเต็มรูปแบบ - ทำให้ database ตรงกับ Google Sheets 100%
+  async fullSync(configId: number): Promise<{ success: boolean; message: string; rowsSynced: number }> {
+    let connection;
+    try {
+      console.log(`\n=== FULL SYNC CONFIG ${configId} ===`);
+      
+      // ดึงการตั้งค่า
+      const [configs] = await pool.execute(`
+        SELECT * FROM sync_configs WHERE id = ?
+      `, [configId]);
+
+      if ((configs as any[]).length === 0) {
+        throw new Error('Sync configuration not found');
+      }
+
+      const config = (configs as any[])[0];
+      console.log(`Full syncing: ${config.name}`);
+      
+      // ตรวจสอบความถูกต้องของ column mapping
+      const columnsData = typeof config.columns === 'string' 
+        ? JSON.parse(config.columns) 
+        : config.columns;
+
+      if (!this.validateColumnMapping(columnsData)) {
+        throw new Error(`Invalid column mapping for config ${configId}. Please recreate this sync configuration.`);
+      }
+
+      const columnMappings: ColumnMapping[] = Object.entries(columnsData).map(([googleCol, mysqlCol]) => ({
+        googleColumn: googleCol,
+        mysqlColumn: mysqlCol as string,
+        dataType: this.detectColumnDataType(mysqlCol as string)
+      }));
+
+      // ดึงข้อมูลจาก Google Sheets
+      const sheetData = await googleSheetsService.getSheetData(config.sheet_url, config.sheet_name);
+      console.log(`Fetched ${sheetData.length} rows from Google Sheets`);
+
+      // แปลงข้อมูล
+      const transformedData = sheetData.map((row: any) => {
+        const convertedRow: any = {};
+        columnMappings.forEach(mapping => {
+          const value = row[mapping.googleColumn] || '';
+          convertedRow[mapping.mysqlColumn] = googleSheetsService.convertCellValue(value, mapping.dataType);
+        });
+        return convertedRow;
+      });
+
+      // เริ่ม transaction
+      connection = await pool.getConnection();
+      await connection.beginTransaction();
+
+      // ตรวจสอบและเพิ่ม tracking columns
+      await this.ensureTrackingColumns(config.table_name, connection);
+
+      console.log(`Clearing existing data in table ${config.table_name}...`);
+      
+      // ลบข้อมูลเก่าทั้งหมด
+      await connection.execute(`DELETE FROM \`${config.table_name}\``);
+      console.log('All existing data cleared');
+
+      let rowsInserted = 0;
+
+      if (transformedData.length > 0) {
+        const columns = columnMappings.map(m => m.mysqlColumn);
+        const safeColumns = columns.map(col => `\`${col}\``);
+        const placeholders = columns.map(() => '?').join(', ');
+        
+        const insertSQL = `
+          INSERT INTO \`${config.table_name}\` (${safeColumns.join(', ')}, sheet_row_index, row_hash)
+          VALUES (${placeholders}, ?, ?)
+        `;
+
+        console.log(`Inserting ${transformedData.length} rows from Google Sheets...`);
+
+        for (const [index, row] of transformedData.entries()) {
+          const sheetRowIndex = index + 2; // +2 เพราะ header = row 1, data เริ่ม row 2
+          
+          // สร้าง values
+          const values = columns.map(col => {
+            const value = row[col];
+            return value === undefined || value === '' ? null : value;
+          });
+
+          // สร้าง hash
+          const normalizedValues = values.map(val => {
+            if (val === null || val === undefined) return '';
+            return String(val).trim();
+          });
+          const rowHash = this.createRowHash(normalizedValues);
+
+          try {
+            await connection.execute(insertSQL, [...values, sheetRowIndex, rowHash]);
+            rowsInserted++;
+          } catch (insertError) {
+            console.error(`Error inserting row ${sheetRowIndex}:`, insertError);
+            throw insertError;
+          }
+        }
+      }
+
+      // อัพเดทสถานะการซิงค์
+      await connection.execute(`
+        UPDATE sync_configs 
+        SET last_sync_at = CURRENT_TIMESTAMP, row_count = ?
+        WHERE id = ?
+      `, [rowsInserted, configId]);
+
+      // บันทึก log
+      const message = `Full sync completed: ${rowsInserted} rows synced (table cleared and rebuilt)`;
+      await connection.execute(`
+        INSERT INTO sync_logs (config_id, status, message, rows_synced)
+        VALUES (?, 'success', ?, ?)
+      `, [configId, message, rowsInserted]);
+
+      await connection.commit();
+
+      console.log(`Full sync completed: ${rowsInserted} rows inserted`);
+      console.log(`Database now exactly matches Google Sheets`);
+
+      return {
+        success: true,
+        message: message,
+        rowsSynced: rowsInserted
+      };
+
+    } catch (error) {
+      if (connection) {
+        await connection.rollback();
+      }
+      
+      console.error('Error in full sync:', error);
       
       // บันทึก error log
       try {
