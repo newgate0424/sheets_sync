@@ -63,7 +63,15 @@ export class SyncService {
         user,
         password,
         database,
+        // Optimize for bulk operations
+        connectTimeout: 60000,
+        multipleStatements: true,
       })
+      
+      // Set MySQL session variables for better performance
+      await this.connection.execute('SET SESSION sql_mode = ""')
+      await this.connection.execute('SET SESSION bulk_insert_buffer_size = 16777216') // 16MB
+      await this.connection.execute('SET SESSION net_buffer_length = 16384') // 16KB
     }
     return this.connection
   }
@@ -209,13 +217,20 @@ export class SyncService {
 
       const currentRowIndices = new Set<number>()
 
-      // ดึงข้อมูลทีละ Batch (50,000 แถว)
-      const batchSize = 50000
+      // ดึงข้อมูลทีละ Batch (100,000 แถว สำหรับข้อมูลขนาดใหญ่)
+      const batchSize = totalRows > 100000 ? 100000 : 50000
       let startRow = 2 // เริ่มจากแถวที่ 2 (ข้าม header)
       const totalBatches = Math.ceil((totalRows - 1) / batchSize)
       let currentBatch = 0
 
-      console.log(`🔄 Starting sync: ${totalRows} rows in ${totalBatches} batches`)
+      console.log(`🔄 Starting sync: ${totalRows} rows in ${totalBatches} batches (batch size: ${batchSize})`)
+
+      // Disable keys สำหรับการ INSERT ที่เร็วขึ้น (ถ้าเป็น MyISAM)
+      try {
+        await conn.execute(`ALTER TABLE \`${config.tableName}\` DISABLE KEYS`)
+      } catch (e) {
+        // InnoDB ไม่รองรับ DISABLE KEYS, ไม่เป็นไร
+      }
 
       while (startRow <= totalRows) {
         currentBatch++
@@ -289,7 +304,8 @@ export class SyncService {
           const columnsPerRow = columnNames.length + 2 // +2 for id, row_index
           const maxPlaceholders = 65000 // MySQL limit is 65535
           const safeChunkSize = Math.floor(maxPlaceholders / columnsPerRow)
-          const insertChunkSize = Math.min(1000, safeChunkSize)
+          // เพิ่ม chunk size สำหรับข้อมูลขนาดใหญ่
+          const insertChunkSize = Math.min(5000, safeChunkSize)
 
           for (let chunkStart = 0; chunkStart < rowsToInsert.length; chunkStart += insertChunkSize) {
             const chunk = rowsToInsert.slice(chunkStart, Math.min(chunkStart + insertChunkSize, rowsToInsert.length))
@@ -342,7 +358,8 @@ export class SyncService {
           const columnsPerRow = columnNames.length + 1 // +1 for row_index
           const maxPlaceholders = 65000
           const safeChunkSize = Math.floor(maxPlaceholders / columnsPerRow)
-          const updateChunkSize = Math.min(1000, safeChunkSize)
+          // เพิ่ม chunk size สำหรับ UPDATE
+          const updateChunkSize = Math.min(5000, safeChunkSize)
 
           for (let chunkStart = 0; chunkStart < rowsToUpdate.length; chunkStart += updateChunkSize) {
             const chunk = rowsToUpdate.slice(chunkStart, Math.min(chunkStart + updateChunkSize, rowsToUpdate.length))
@@ -390,7 +407,7 @@ export class SyncService {
       if (rowsToDelete.length > 0) {
         console.log(`  🗑️  Deleting ${rowsToDelete.length} removed rows...`)
         // แบ่ง delete เป็น chunks เพื่อหลีกเลี่ยง placeholder limit
-        const deleteChunkSize = 1000
+        const deleteChunkSize = 5000
         
         for (let i = 0; i < rowsToDelete.length; i += deleteChunkSize) {
           const chunk = rowsToDelete.slice(i, Math.min(i + deleteChunkSize, rowsToDelete.length))
@@ -412,6 +429,13 @@ export class SyncService {
         }
 
         rowsDeleted = rowsToDelete.length
+      }
+
+      // Enable keys กลับ
+      try {
+        await conn.execute(`ALTER TABLE \`${config.tableName}\` ENABLE KEYS`)
+      } catch (e) {
+        // InnoDB ไม่รองรับ ENABLE KEYS
       }
 
       // อัปเดต Sync Log เป็น success
