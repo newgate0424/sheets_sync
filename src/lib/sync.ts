@@ -69,9 +69,11 @@ export class SyncService {
       })
       
       // Set MySQL session variables for better performance
-      await this.connection.execute('SET SESSION sql_mode = ""')
-      await this.connection.execute('SET SESSION bulk_insert_buffer_size = 16777216') // 16MB
-      await this.connection.execute('SET SESSION net_buffer_length = 16384') // 16KB
+      try {
+        await this.connection.execute('SET SESSION sql_mode = ""')
+      } catch (e) {
+        // Ignore if sql_mode cannot be changed
+      }
     }
     return this.connection
   }
