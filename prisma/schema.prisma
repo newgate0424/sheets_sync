@@ -1,0 +1,63 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  log      = ["error", "warn"]
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// เก็บข้อมูลการตั้งค่าของแต่ละ Sheet
+model SheetConfig {
+  id            String   @id @default(cuid())
+  name          String   // ชื่อที่ตั้งให้กับ config นี้
+  spreadsheetId String   // Google Sheets ID
+  sheetName     String   // ชื่อของ Sheet ภายใน Spreadsheet
+  range         String   // เช่น A1:Z1000
+  tableName     String   @unique // ชื่อตารางที่จะสร้างใน database
+  schema        Json     // เก็บ schema ของคอลัมน์ [{ name: "col1", type: "VARCHAR(255)" }]
+  folder        String?  @default("Default") // โฟลเดอร์สำหรับจัดกลุ่ม
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  syncLogs      SyncLog[]
+  
+  @@index([spreadsheetId])
+  @@index([tableName])
+  @@index([folder])
+}
+
+// เก็บ Log การซิงค์แต่ละครั้ง
+model SyncLog {
+  id           String      @id @default(cuid())
+  configId     String
+  config       SheetConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  status       String      // "running", "success", "failed"
+  startedAt    DateTime    @default(now())
+  completedAt  DateTime?
+  rowsProcessed Int        @default(0)
+  rowsInserted Int        @default(0)
+  rowsUpdated  Int        @default(0)
+  rowsDeleted  Int        @default(0)
+  errorMessage String?     @db.Text
+  
+  @@index([configId])
+  @@index([startedAt])
+}
+
+// เก็บ Checksum ของแต่ละแถวเพื่อตรวจจับการเปลี่ยนแปลง
+model RowChecksum {
+  id           String   @id @default(cuid())
+  tableName    String   
+  rowIndex     Int      // แถวที่เท่าไหร่ใน Google Sheets
+  checksum     String   // MD5 hash ของข้อมูลทั้งแถว
+  lastSyncedAt DateTime @default(now())
+  
+  @@unique([tableName, rowIndex])
+  @@index([tableName])
+}
