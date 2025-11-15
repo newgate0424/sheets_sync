@@ -39,7 +39,13 @@ export default function DashboardPage() {
 
   const loadStats = async () => {
     try {
-      const response = await fetch('/api/stats')
+      const response = await fetch('/api/stats', {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        }
+      })
       const data = await response.json()
       setStats(data)
     } catch (error) {

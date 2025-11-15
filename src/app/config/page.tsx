@@ -138,7 +138,8 @@ export default function ConfigPage() {
 
       if (response.ok) {
         alert('บันทึกการตั้งค่าสำเร็จ!')
-        window.location.href = '/dashboard'
+        // ใช้ router.push แทน window.location เพื่อให้ Next.js revalidate
+        window.location.replace('/dashboard')
       } else {
         alert('เกิดข้อผิดพลาด: ' + data.error)
       }
