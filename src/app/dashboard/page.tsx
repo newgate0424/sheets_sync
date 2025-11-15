@@ -1,8 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+// Disable Next.js caching for this page
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
+import { useRouter } from 'next/navigation'
 
 interface TableStat {
   id: string
@@ -22,6 +27,7 @@ interface FolderGroup {
 }
 
 export default function DashboardPage() {
+  const router = useRouter()
   const [stats, setStats] = useState<TableStat[]>([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState<string | null>(null)
@@ -31,15 +37,10 @@ export default function DashboardPage() {
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
   const [movingConfig, setMovingConfig] = useState<string | null>(null)
 
-  useEffect(() => {
-    loadStats()
-    const interval = setInterval(loadStats, 10000)
-    return () => clearInterval(interval)
-  }, [])
-
-  const loadStats = async () => {
+  const loadStats = useCallback(async () => {
     try {
-      const response = await fetch('/api/stats', {
+      const timestamp = Date.now()
+      const response = await fetch(`/api/stats?t=${timestamp}`, {
         cache: 'no-store',
         headers: {
           'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -53,7 +54,13 @@ export default function DashboardPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    loadStats()
+    const interval = setInterval(loadStats, 10000)
+    return () => clearInterval(interval)
+  }, [loadStats])
 
   const handleSync = async (configId: string) => {
     setSyncing(configId)
@@ -73,7 +80,8 @@ export default function DashboardPage() {
           `ซิงค์สำเร็จ! เพิ่ม: ${data.rowsInserted} | อัปเดต: ${data.rowsUpdated} | ลบ: ${data.rowsDeleted}`,
           { id: toastId, duration: 5000 }
         )
-        loadStats()
+        router.refresh()
+        await loadStats()
       } else {
         toast.error('ซิงค์ล้มเหลว: ' + data.error, { id: toastId })
       }
@@ -116,7 +124,8 @@ export default function DashboardPage() {
 
       if (data.success) {
         toast.success('ลบตารางเรียบร้อยแล้ว!', { id: toastId })
-        loadStats()
+        router.refresh()
+        await loadStats()
       } else {
         toast.error('ลบล้มเหลว: ' + data.error, { id: toastId })
       }
@@ -149,7 +158,8 @@ export default function DashboardPage() {
 
       if (data.success) {
         toast.success(`ย้ายไป "${newFolder}" เรียบร้อย!`, { id: toastId })
-        loadStats()
+        router.refresh()
+        await loadStats()
       } else {
         toast.error('ย้ายล้มเหลว: ' + data.error, { id: toastId })
       }
@@ -182,7 +192,8 @@ export default function DashboardPage() {
           `ซิงค์โฟลเดอร์สำเร็จ! สำเร็จ: ${data.successCount} | ล้มเหลว: ${data.failedCount}`,
           { id: toastId, duration: 5000 }
         )
-        loadStats()
+        router.refresh()
+        await loadStats()
       } else {
         toast.error('ซิงค์ล้มเหลว: ' + data.error, { id: toastId })
       }
@@ -216,7 +227,8 @@ export default function DashboardPage() {
           `ซิงค์ทั้งหมดสำเร็จ! สำเร็จ: ${data.successCount} | ล้มเหลว: ${data.failedCount}`,
           { id: toastId, duration: 5000 }
         )
-        loadStats()
+        router.refresh()
+        await loadStats()
       } else {
         toast.error('ซิงค์ล้มเหลว: ' + data.error, { id: toastId })
       }

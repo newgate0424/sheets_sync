@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { syncService } from '@/lib/sync'
 
 interface SyncResult {
@@ -82,6 +83,10 @@ export async function POST(request: NextRequest) {
     const failedCount = syncResults.length - successCount
 
     console.log(`✅ Bulk sync completed: ${successCount} success, ${failedCount} failed in ${(totalDuration/1000).toFixed(2)}s`)
+
+    // Force Next.js to revalidate dashboard and stats
+    revalidatePath('/dashboard')
+    revalidatePath('/api/stats')
 
     return NextResponse.json({
       success: true,

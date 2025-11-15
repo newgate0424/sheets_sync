@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 
 interface Column {
   name: string
@@ -20,6 +21,7 @@ const DATA_TYPES = [
 ]
 
 export default function ConfigPage() {
+  const router = useRouter()
   const [step, setStep] = useState(1)
   const [loading, setLoading] = useState(false)
 
@@ -138,8 +140,8 @@ export default function ConfigPage() {
 
       if (response.ok) {
         alert('บันทึกการตั้งค่าสำเร็จ!')
-        // ใช้ router.push แทน window.location เพื่อให้ Next.js revalidate
-        window.location.replace('/dashboard')
+        router.push('/dashboard')
+        router.refresh()
       } else {
         alert('เกิดข้อผิดพลาด: ' + data.error)
       }

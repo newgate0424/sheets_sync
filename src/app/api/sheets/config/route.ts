@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { prisma } from '@/lib/db'
 import { syncService } from '@/lib/sync'
 
@@ -57,6 +58,10 @@ export async function POST(request: NextRequest) {
 
     // สร้างตารางใน MySQL
     await syncService.createTable(tableName, schema)
+
+    // Force Next.js to revalidate dashboard and stats
+    revalidatePath('/dashboard')
+    revalidatePath('/api/stats')
 
     return NextResponse.json(config)
   } catch (error: any) {

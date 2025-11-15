@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { prisma } from '@/lib/db'
 
 // PUT /api/folders/move - ย้าย config ไป folder ใหม่
@@ -18,6 +19,10 @@ export async function PUT(request: NextRequest) {
       where: { id: configId },
       data: { folder: folder || 'Default' },
     })
+
+    // Force Next.js to revalidate dashboard and stats
+    revalidatePath('/dashboard')
+    revalidatePath('/api/stats')
 
     return NextResponse.json({ success: true })
   } catch (error: any) {
@@ -46,6 +51,10 @@ export async function POST(request: NextRequest) {
       where: { folder: oldName },
       data: { folder: newName },
     })
+
+    // Force Next.js to revalidate dashboard and stats
+    revalidatePath('/dashboard')
+    revalidatePath('/api/stats')
 
     return NextResponse.json({ success: true })
   } catch (error: any) {

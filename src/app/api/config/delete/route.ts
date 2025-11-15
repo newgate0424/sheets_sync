@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { prisma } from '@/lib/db'
 import mysql from 'mysql2/promise'
 
@@ -65,6 +66,10 @@ export async function DELETE(request: NextRequest) {
     await prisma.sheetConfig.delete({
       where: { id: configId },
     })
+
+    // Force Next.js to revalidate dashboard and stats
+    revalidatePath('/dashboard')
+    revalidatePath('/api/stats')
 
     return NextResponse.json({ 
       success: true,
