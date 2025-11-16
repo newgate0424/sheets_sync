@@ -1,0 +1,154 @@
+import { NextRequest, NextResponse } from 'next/server';
+import pool from '@/lib/db';
+import bcrypt from 'bcrypt';
+
+// Helper function สำหรับตรวจสอบ admin
+function getSession(request: NextRequest) {
+  try {
+    const sessionCookie = request.cookies.get('session');
+    if (!sessionCookie) return null;
+    return JSON.parse(sessionCookie.value);
+  } catch {
+    return null;
+  }
+}
+
+// GET - ดึงรายชื่อ users (เฉพาะ admin)
+export async function GET(request: NextRequest) {
+  try {
+    const session = getSession(request);
+    
+    if (!session || session.role !== 'admin') {
+      return NextResponse.json({ error: 'Unauthorized - Admin only' }, { status: 403 });
+    }
+
+    const connection = await pool.getConnection();
+    const [users]: any = await connection.query(
+      'SELECT id, username, full_name, role, is_active, created_at, last_login FROM users ORDER BY created_at DESC'
+    );
+    connection.release();
+
+    return NextResponse.json({ users });
+  } catch (error: any) {
+    console.error('Get users error:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+// POST - สร้าง user ใหม่ (เฉพาะ admin)
+export async function POST(request: NextRequest) {
+  try {
+    const session = getSession(request);
+    
+    if (!session || session.role !== 'admin') {
+      return NextResponse.json({ error: 'Unauthorized - Admin only' }, { status: 403 });
+    }
+
+    const { username, password, full_name, role } = await request.json();
+
+    if (!username || !password || !full_name) {
+      return NextResponse.json({ error: 'กรุณากรอกข้อมูลให้ครบถ้วน' }, { status: 400 });
+    }
+
+    // Validate username (alphanumeric only)
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+      return NextResponse.json({ error: 'Username ต้องเป็นตัวอักษรภาษาอังกฤษและตัวเลขเท่านั้น' }, { status: 400 });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const connection = await pool.getConnection();
+    
+    try {
+      await connection.query(
+        'INSERT INTO users (username, password, full_name, role) VALUES (?, ?, ?, ?)',
+        [username, hashedPassword, full_name, role || 'user']
+      );
+      
+      return NextResponse.json({ success: true, message: 'สร้างผู้ใช้สำเร็จ' });
+    } catch (error: any) {
+      if (error.code === 'ER_DUP_ENTRY') {
+        return NextResponse.json({ error: 'Username นี้มีในระบบแล้ว' }, { status: 400 });
+      }
+      throw error;
+    } finally {
+      connection.release();
+    }
+  } catch (error: any) {
+    console.error('Create user error:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+// PUT - แก้ไข user (เฉพาะ admin)
+export async function PUT(request: NextRequest) {
+  try {
+    const session = getSession(request);
+    
+    if (!session || session.role !== 'admin') {
+      return NextResponse.json({ error: 'Unauthorized - Admin only' }, { status: 403 });
+    }
+
+    const { id, full_name, role, is_active, password } = await request.json();
+
+    if (!id) {
+      return NextResponse.json({ error: 'ไม่พบ user id' }, { status: 400 });
+    }
+
+    const connection = await pool.getConnection();
+    
+    let query = 'UPDATE users SET full_name = ?, role = ?, is_active = ?';
+    const params: any[] = [full_name, role, is_active];
+
+    // ถ้ามีการเปลี่ยน password
+    if (password && password.trim() !== '') {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      query += ', password = ?';
+      params.push(hashedPassword);
+    }
+
+    query += ' WHERE id = ?';
+    params.push(id);
+
+    await connection.query(query, params);
+    connection.release();
+
+    return NextResponse.json({ success: true, message: 'อัปเดตข้อมูลสำเร็จ' });
+  } catch (error: any) {
+    console.error('Update user error:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+// DELETE - ลบ user (เฉพาะ admin)
+export async function DELETE(request: NextRequest) {
+  try {
+    const session = getSession(request);
+    
+    if (!session || session.role !== 'admin') {
+      return NextResponse.json({ error: 'Unauthorized - Admin only' }, { status: 403 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+
+    if (!id) {
+      return NextResponse.json({ error: 'ไม่พบ user id' }, { status: 400 });
+    }
+
+    // ห้ามลบตัวเอง
+    if (parseInt(id) === session.userId) {
+      return NextResponse.json({ error: 'ไม่สามารถลบบัญชีของตัวเองได้' }, { status: 400 });
+    }
+
+    const connection = await pool.getConnection();
+    await connection.query('DELETE FROM users WHERE id = ?', [id]);
+    connection.release();
+
+    return NextResponse.json({ success: true, message: 'ลบผู้ใช้สำเร็จ' });
+  } catch (error: any) {
+    console.error('Delete user error:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
