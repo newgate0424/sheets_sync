@@ -1,7 +1,28 @@
+'use client';
+
 import Link from 'next/link';
 import { Database, FileText, Activity } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 export default function Home() {
+  const [dbStatus, setDbStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
+
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const response = await fetch('/api/health');
+        const data = await response.json();
+        setDbStatus(data.status === 'healthy' ? 'connected' : 'disconnected');
+      } catch (error) {
+        setDbStatus('disconnected');
+      }
+    };
+    
+    checkHealth();
+    const interval = setInterval(checkHealth, 30000); // Check every 30s
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <div className="max-w-6xl mx-auto">
       <div className="bg-gradient-to-br from-blue-50 to-indigo-100 rounded-xl p-8 mb-6">
@@ -45,9 +66,25 @@ export default function Home() {
         </div>
 
         <div className="mt-12 text-center">
-          <div className="inline-flex items-center gap-2 px-6 py-3 bg-white rounded-full shadow-md">
-            <Activity className="w-5 h-5 text-blue-500 animate-pulse" />
-            <span className="text-gray-700 font-medium">System Online</span>
+          <div className={`inline-flex items-center gap-2 px-6 py-3 rounded-full shadow-md ${
+            dbStatus === 'connected' ? 'bg-green-50 border border-green-200' : 
+            dbStatus === 'disconnected' ? 'bg-red-50 border border-red-200' : 
+            'bg-gray-50 border border-gray-200'
+          }`}>
+            <Activity className={`w-5 h-5 ${
+              dbStatus === 'connected' ? 'text-green-500 animate-pulse' : 
+              dbStatus === 'disconnected' ? 'text-red-500' : 
+              'text-gray-400 animate-spin'
+            }`} />
+            <span className={`font-medium ${
+              dbStatus === 'connected' ? 'text-green-700' : 
+              dbStatus === 'disconnected' ? 'text-red-700' : 
+              'text-gray-600'
+            }`}>
+              {dbStatus === 'connected' ? 'Database Connected' : 
+               dbStatus === 'disconnected' ? 'Database Disconnected' : 
+               'Checking Connection...'}
+            </span>
           </div>
         </div>
       </div>
