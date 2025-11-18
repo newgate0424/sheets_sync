@@ -1,7 +1,7 @@
 'use client';
 
 import { Menu, User, LogOut, Users as UsersIcon } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
 interface HeaderProps {
@@ -20,10 +20,27 @@ export default function Header({ onMenuClick, sidebarOpen = true }: HeaderProps)
   const router = useRouter();
   const [user, setUser] = useState<UserSession | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchSession();
   }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false);
+      }
+    };
+
+    if (showUserMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showUserMenu]);
 
   const fetchSession = async () => {
     try {
@@ -74,7 +91,7 @@ export default function Header({ onMenuClick, sidebarOpen = true }: HeaderProps)
             </button>
           )}
           
-          <div className="relative">
+          <div className="relative" ref={menuRef}>
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
               className="flex items-center gap-2 p-2 hover:bg-gray-100 rounded-lg"
@@ -89,7 +106,7 @@ export default function Header({ onMenuClick, sidebarOpen = true }: HeaderProps)
             </button>
 
             {showUserMenu && user && (
-              <div className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg">
+              <div className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
                 <div className="p-4 border-b border-gray-200">
                   <p className="text-sm font-medium text-gray-900">{user.full_name}</p>
                   <p className="text-xs text-gray-500">@{user.username}</p>
@@ -100,7 +117,10 @@ export default function Header({ onMenuClick, sidebarOpen = true }: HeaderProps)
                   </span>
                 </div>
                 <button
-                  onClick={handleLogout}
+                  onClick={() => {
+                    setShowUserMenu(false);
+                    handleLogout();
+                  }}
                   className="w-full flex items-center gap-2 px-4 py-3 text-sm text-red-600 hover:bg-red-50"
                 >
                   <LogOut className="w-4 h-4" />

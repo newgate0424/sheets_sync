@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { ensureDbInitialized } from '@/lib/dbAdapter';
 import { getGoogleSheetsClient } from '@/lib/googleSheets';
+import { getMongoDb } from '@/lib/mongoDb';
 import crypto from 'crypto';
 
 // ฟังก์ชันคำนวณ checksum จาก Google Sheets data
@@ -21,61 +22,79 @@ function calculateChecksum(rows: any[][]): string {
 // POST - สร้างตารางและ sync ข้อมูล
 export async function POST(request: NextRequest) {
   try {
+    const pool = await ensureDbInitialized();
     const { dataset, folderName, tableName, spreadsheetId, sheetName, schema } = await request.json();
     
     if (!dataset || !tableName || !spreadsheetId || !sheetName || !schema) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    const connection = await pool.getConnection();
-
-    // สร้างตาราง sync_config ถ้ายังไม่มี
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS sync_config (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        dataset_name VARCHAR(255) NOT NULL,
-        folder_name VARCHAR(255),
-        table_name VARCHAR(255) NOT NULL,
-        spreadsheet_id VARCHAR(255) NOT NULL,
-        sheet_name VARCHAR(255) NOT NULL,
-        last_sync TIMESTAMP NULL,
-        last_checksum VARCHAR(64),
-        skip_count INT DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE KEY unique_table (dataset_name, table_name)
-      )
-    `);
-
     // สร้างตารางตาม schema
     const columns = schema.map((col: any) => 
-      `\`${col.name}\` ${col.type} ${col.nullable ? 'NULL' : 'NOT NULL'}`
+      `"${col.name}" ${col.type} ${col.nullable ? 'NULL' : 'NOT NULL'}`
     ).join(', ');
     
-    const createTableSQL = `CREATE TABLE IF NOT EXISTS \`${dataset}\`.\`${tableName}\` (
-      id INT AUTO_INCREMENT PRIMARY KEY,
+    const createTableSQL = `CREATE TABLE IF NOT EXISTS "${tableName}" (
+      id SERIAL PRIMARY KEY,
       ${columns},
-      synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`;
     
-    await connection.query(createTableSQL);
+    await pool.query(createTableSQL);
 
-    // บันทึก sync config
-    await connection.query(
-      `INSERT INTO sync_config (dataset_name, folder_name, table_name, spreadsheet_id, sheet_name) 
-       VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE spreadsheet_id = ?, sheet_name = ?`,
-      [dataset, folderName || null, tableName, spreadsheetId, sheetName, spreadsheetId, sheetName]
-    );
+    // อ่าน dbType
+    const mongoDb = await getMongoDb();
+    const settings = await mongoDb.collection('settings').findOne({ key: 'database_connection' });
+    const dbType = settings?.dbType || 'mysql';
 
-    // บันทึกในตาราง folder_tables ถ้ามี folderName
-    if (folderName) {
-      await connection.query(
-        'INSERT IGNORE INTO folder_tables (dataset_name, folder_name, table_name) VALUES (?, ?, ?)',
-        [dataset, folderName, tableName]
+    // บันทึก sync config (ใช้เฉพาะ table_name, spreadsheet_id, sheet_name)
+    if (dbType === 'mysql') {
+      await pool.query(
+        `INSERT INTO sync_config (table_name, spreadsheet_id, sheet_name, folder_name, dataset_name) 
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE spreadsheet_id = VALUES(spreadsheet_id), sheet_name = VALUES(sheet_name)`,
+        [tableName, spreadsheetId, sheetName, folderName || '', dataset]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO sync_config (table_name, spreadsheet_id, sheet_name, folder_name, dataset_name) 
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (table_name) 
+         DO UPDATE SET spreadsheet_id = $2, sheet_name = $3`,
+        [tableName, spreadsheetId, sheetName, folderName || '', dataset]
       );
     }
 
-    connection.release();
+    // บันทึกใน folder_tables ถ้ามี folderName (ใช้ folder_id แทน folder_name)
+    if (folderName) {
+      // หา folder_id จาก folder name
+      const folderResult = await pool.query(
+        dbType === 'mysql' 
+          ? 'SELECT id FROM `folders` WHERE name = ?' 
+          : 'SELECT id FROM "folders" WHERE name = $1',
+        [folderName]
+      );
+      
+      if (folderResult.rows.length > 0) {
+        const folderId = folderResult.rows[0].id;
+        
+        if (dbType === 'mysql') {
+          await pool.query(
+            `INSERT INTO folder_tables (folder_id, table_name) 
+             VALUES (?, ?) 
+             ON DUPLICATE KEY UPDATE table_name = VALUES(table_name)`,
+            [folderId, tableName]
+          );
+        } else {
+          await pool.query(
+            `INSERT INTO folder_tables (folder_id, table_name) 
+             VALUES ($1, $2) 
+             ON CONFLICT (folder_id, table_name) DO NOTHING`,
+            [folderId, tableName]
+          );
+        }
+      }
+    }
 
     return NextResponse.json({ success: true, message: 'Table created successfully' });
   } catch (error: any) {
@@ -90,33 +109,31 @@ export async function PUT(request: NextRequest) {
   let logId: number | null = null;
   
   try {
+    const pool = await ensureDbInitialized();
     const { dataset, tableName } = await request.json();
     
     if (!dataset || !tableName) {
       return NextResponse.json({ error: 'Dataset and table name are required' }, { status: 400 });
     }
 
-    const connection = await pool.getConnection();
-
     // สร้าง log entry
-    const [logResult]: any = await connection.query(
-      'INSERT INTO sync_logs (status, table_name, dataset_name) VALUES (?, ?, ?)',
-      ['running', tableName, dataset]
+    const logResult = await pool.query(
+      'INSERT INTO sync_logs (status, table_name) VALUES ($1, $2) RETURNING id',
+      ['running', tableName]
     );
-    logId = logResult.insertId;
+    logId = logResult.rows[0].id;
 
     // ดึง sync config
-    const [configs]: any = await connection.query(
-      'SELECT * FROM sync_config WHERE dataset_name = ? AND table_name = ?',
-      [dataset, tableName]
+    const configs = await pool.query(
+      'SELECT * FROM sync_config WHERE table_name = $1',
+      [tableName]
     );
 
-    if (configs.length === 0) {
-      connection.release();
+    if (configs.rows.length === 0) {
       return NextResponse.json({ error: 'Sync config not found' }, { status: 404 });
     }
 
-    const config = configs[0];
+    const config = configs.rows[0];
     const sheets = await getGoogleSheetsClient();
 
     // ดึงข้อมูลจาก Google Sheets แบบไม่จำกัดจำนวนแถว
@@ -161,104 +178,86 @@ export async function PUT(request: NextRequest) {
     const rows = allRows;
     
     if (rows.length <= 1) {
-      connection.release();
       return NextResponse.json({ error: 'No data to sync' }, { status: 404 });
     }
 
-    // คำนวณ checksum ของข้อมูลใหม่
-    const newChecksum = calculateChecksum(rows);
-    const oldChecksum = config.last_checksum;
-
-    console.log(`Checksum - Old: ${oldChecksum}, New: ${newChecksum}`);
-
-    // ถ้า checksum เหมือนเดิม = ข้อมูลไม่เปลี่ยน → ข้าม sync
-    if (oldChecksum && oldChecksum === newChecksum) {
-      console.log(`Data unchanged, skipping sync for ${tableName}`);
-      
-      // อัปเดต skip_count
-      await connection.query(
-        'UPDATE sync_config SET skip_count = skip_count + 1 WHERE dataset_name = ? AND table_name = ?',
-        [dataset, tableName]
-      );
-
-      // อัปเดท log - skipped
-      const duration = Math.floor((Date.now() - startTime) / 1000);
-      if (logId) {
-        await connection.query(
-          `UPDATE sync_logs 
-           SET status = 'skipped', 
-               completed_at = NOW(), 
-               duration_seconds = ?,
-               inserted = 0,
-               updated = 0,
-               deleted = 0
-           WHERE id = ?`,
-          [duration, logId]
-        );
-      }
-
-      connection.release();
-
-      return NextResponse.json({ 
-        success: true, 
-        skipped: true,
-        message: `Sync skipped - data unchanged (checksum: ${newChecksum})`,
-        stats: {
-          inserted: 0,
-          updated: 0,
-          deleted: 0,
-          total: rows.length - 1
-        }
-      });
-    }
-
-    console.log(`Data changed, proceeding with sync...`);
+    console.log(`Proceeding with sync for ${tableName}...`);
 
     const headers = rows[0];
     const dataRows = rows.slice(1);
 
     // เตรียมชื่อคอลัมน์
     const columnNames = headers.map((h: string) => 
-      `\`${h.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase()}\``
+      `"${h.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase()}"`
     ).join(', ');
 
     let insertedCount = 0;
     let updatedCount = 0;
     let deletedCount = 0;
 
-    // วิธีที่เร็วกว่า: ลบทั้งหมดแล้ว insert ใหม่ (สำหรับข้อมูลจำนวนมาก)
     // นับจำนวนแถวเดิมก่อนลบ
-    const [countResult]: any = await connection.query(`SELECT COUNT(*) as count FROM \`${dataset}\`.\`${tableName}\``);
-    const oldRowCount = countResult[0]?.count || 0;
+    const countResult = await pool.query(`SELECT COUNT(*) as count FROM "${tableName}"`);
+    const oldRowCount = parseInt(countResult.rows[0]?.count || '0');
 
-    // ลบข้อมูลเก่าทั้งหมด
-    await connection.query(`TRUNCATE TABLE \`${dataset}\`.\`${tableName}\``);
-    deletedCount = oldRowCount;
+    console.log(`Deleted ${oldRowCount} old rows, preparing to insert ${dataRows.length} new rows...`);
 
-    console.log(`Deleted ${deletedCount} old rows, inserting ${dataRows.length} new rows...`);
+    // เริ่ม transaction เพื่อความเร็ว
+    await pool.query('START TRANSACTION');
 
-    // Insert ข้อมูลใหม่แบบ batch
-    if (dataRows.length > 0) {
-      const batchSize = 1000;
-      
-      for (let i = 0; i < dataRows.length; i += batchSize) {
-        const batch = dataRows.slice(i, i + batchSize);
+    try {
+      // ลบข้อมูลเก่าทั้งหมด (TRUNCATE เร็วกว่า DELETE)
+      await pool.query(`TRUNCATE TABLE "${tableName}"`);
+      deletedCount = oldRowCount;
+
+      // Insert ข้อมูลใหม่แบบ batch ขนาดใหญ่
+      if (dataRows.length > 0) {
+        // คำนวณ batch size ตาม column count (MySQL limit 65,535 placeholders)
+        const maxPlaceholders = 65000; // เผื่อ buffer
+        const columnsCount = headers.length;
+        const maxRowsPerBatch = Math.floor(maxPlaceholders / columnsCount);
+        const batchSize = Math.min(maxRowsPerBatch, dataRows.length > 100000 ? 10000 : 5000);
         
-        const values = batch.map(row => {
-          const vals = headers.map((_: any, index: number) => {
-            const val = row[index];
-            return val !== undefined && val !== '' ? connection.escape(val) : 'NULL';
+        for (let i = 0; i < dataRows.length; i += batchSize) {
+          const batch = dataRows.slice(i, i + batchSize);
+          
+          // สร้าง parameterized query
+          const valueRows = batch.map((row, rowIndex) => {
+            const placeholders = headers.map((_: any, colIndex: number) => {
+              const paramIndex = rowIndex * headers.length + colIndex + 1;
+              return `$${paramIndex}`;
+            }).join(', ');
+            return `(${placeholders})`;
           }).join(', ');
-          return `(${vals})`;
-        }).join(', ');
 
-        await connection.query(
-          `INSERT INTO \`${dataset}\`.\`${tableName}\` (${columnNames}) VALUES ${values}`
-        );
-        
-        insertedCount += batch.length;
-        console.log(`Inserted ${insertedCount}/${dataRows.length} rows...`);
+          // สร้าง array ของค่าทั้งหมด
+          const allValues = batch.flatMap(row => 
+            headers.map((_: any, index: number) => {
+              const val = row[index];
+              return val !== undefined && val !== '' ? val : null;
+            })
+          );
+
+          await pool.query(
+            `INSERT INTO "${tableName}" (${columnNames}) VALUES ${valueRows}`,
+            allValues
+          );
+          
+          insertedCount += batch.length;
+          
+          // Log ทุก 50,000 แถว เพื่อลด overhead
+          if (insertedCount % 50000 === 0 || insertedCount === dataRows.length) {
+            console.log(`Inserted ${insertedCount}/${dataRows.length} rows...`);
+          }
+        }
       }
+
+      // Commit transaction
+      await pool.query('COMMIT');
+
+    } catch (error) {
+      // Rollback ถ้า error
+      await pool.query('ROLLBACK');
+      throw error;
     }
 
     // คำนวณ updated (ถ้าแถวเท่าเดิม = update, ถ้าแถวมากกว่า = insert)
@@ -277,29 +276,28 @@ export async function PUT(request: NextRequest) {
 
     console.log(`Sync completed: ${insertedCount} inserted, ${updatedCount} updated, ${deletedCount} deleted`);
 
-    // อัพเดท last_sync และ checksum
-    await connection.query(
-      'UPDATE sync_config SET last_sync = NOW(), last_checksum = ?, skip_count = 0 WHERE dataset_name = ? AND table_name = ?',
-      [newChecksum, dataset, tableName]
+    // อัพเดท last_sync
+    await pool.query(
+      'UPDATE sync_config SET last_sync = NOW() WHERE table_name = $1',
+      [tableName]
     );
 
     // อัพเดท log - success
     const duration = Math.floor((Date.now() - startTime) / 1000);
     if (logId) {
-      await connection.query(
+      await pool.query(
         `UPDATE sync_logs 
-         SET status = 'success', 
+         SET status = $1, 
              completed_at = NOW(), 
-             duration_seconds = ?,
-             inserted = ?,
-             updated = ?,
-             deleted = ?
-         WHERE id = ?`,
-        [duration, insertedCount, updatedCount, deletedCount, logId]
+             sync_duration = $2,
+             rows_inserted = $3,
+             rows_updated = $4,
+             rows_deleted = $5,
+             rows_synced = $6
+         WHERE id = $7`,
+        ['success', duration, insertedCount, updatedCount, deletedCount, dataRows.length, logId]
       );
     }
-
-    connection.release();
 
     return NextResponse.json({ 
       success: true, 
@@ -317,18 +315,17 @@ export async function PUT(request: NextRequest) {
     // อัพเดท log - error
     if (logId) {
       try {
-        const connection = await pool.getConnection();
+        const pool = await ensureDbInitialized();
         const duration = Math.floor((Date.now() - startTime) / 1000);
-        await connection.query(
+        await pool.query(
           `UPDATE sync_logs 
-           SET status = 'error', 
+           SET status = $1, 
                completed_at = NOW(), 
-               duration_seconds = ?,
-               error_message = ?
-           WHERE id = ?`,
-          [duration, error.message, logId]
+               sync_duration = $2,
+               error_message = $3
+           WHERE id = $4`,
+          ['error', duration, error.message, logId]
         );
-        connection.release();
       } catch (logError) {
         console.error('Error updating log:', logError);
       }

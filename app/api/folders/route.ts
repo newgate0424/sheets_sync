@@ -1,40 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { ensureDbInitialized } from '@/lib/dbAdapter';
 
 // GET - ดึงโฟลเดอร์ทั้งหมด
 export async function GET() {
   try {
-    const connection = await pool.getConnection();
+    const pool = await ensureDbInitialized();
+    const folders = await pool.query('SELECT * FROM folders ORDER BY name');
+    const folderTables = await pool.query('SELECT * FROM folder_tables ORDER BY folder_id, table_name');
     
-    // สร้างตาราง folders ถ้ายังไม่มี
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS folders (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        dataset_name VARCHAR(255) NOT NULL,
-        folder_name VARCHAR(255) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE KEY unique_folder (dataset_name, folder_name)
-      )
-    `);
-
-    // สร้างตาราง folder_tables ถ้ายังไม่มี
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS folder_tables (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        dataset_name VARCHAR(255) NOT NULL,
-        folder_name VARCHAR(255) NOT NULL,
-        table_name VARCHAR(255) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE KEY unique_table (dataset_name, folder_name, table_name)
-      )
-    `);
-
-    const [folders]: any = await connection.query('SELECT * FROM folders ORDER BY dataset_name, folder_name');
-    const [folderTables]: any = await connection.query('SELECT * FROM folder_tables ORDER BY dataset_name, folder_name, table_name');
-    
-    connection.release();
-    
-    return NextResponse.json({ folders, folderTables });
+    return NextResponse.json({ folders: folders.rows, folderTables: folderTables.rows });
   } catch (error: any) {
     console.error('Database error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -44,20 +18,17 @@ export async function GET() {
 // POST - สร้างโฟลเดอร์ใหม่
 export async function POST(request: NextRequest) {
   try {
-    const { dataset, folderName } = await request.json();
+    const pool = await ensureDbInitialized();
+    const { folderName, description } = await request.json();
     
-    if (!dataset || !folderName) {
-      return NextResponse.json({ error: 'Dataset and folder name are required' }, { status: 400 });
+    if (!folderName) {
+      return NextResponse.json({ error: 'Folder name is required' }, { status: 400 });
     }
-
-    const connection = await pool.getConnection();
     
-    await connection.query(
-      'INSERT INTO folders (dataset_name, folder_name) VALUES (?, ?)',
-      [dataset, folderName]
+    await pool.query(
+      'INSERT INTO folders (name, description) VALUES ($1, $2)',
+      [folderName, description || null]
     );
-    
-    connection.release();
     
     return NextResponse.json({ success: true });
   } catch (error: any) {
@@ -69,25 +40,17 @@ export async function POST(request: NextRequest) {
 // PUT - เปลี่ยนชื่อโฟลเดอร์
 export async function PUT(request: NextRequest) {
   try {
-    const { dataset, oldName, newName } = await request.json();
+    const pool = await ensureDbInitialized();
+    const { folderId, newName } = await request.json();
     
-    if (!dataset || !oldName || !newName) {
-      return NextResponse.json({ error: 'Dataset, old name, and new name are required' }, { status: 400 });
+    if (!folderId || !newName) {
+      return NextResponse.json({ error: 'Folder ID and new name are required' }, { status: 400 });
     }
-
-    const connection = await pool.getConnection();
     
-    await connection.query(
-      'UPDATE folders SET folder_name = ? WHERE dataset_name = ? AND folder_name = ?',
-      [newName, dataset, oldName]
+    await pool.query(
+      'UPDATE folders SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [newName, folderId]
     );
-
-    await connection.query(
-      'UPDATE folder_tables SET folder_name = ? WHERE dataset_name = ? AND folder_name = ?',
-      [newName, dataset, oldName]
-    );
-    
-    connection.release();
     
     return NextResponse.json({ success: true });
   } catch (error: any) {
@@ -99,53 +62,46 @@ export async function PUT(request: NextRequest) {
 // DELETE - ลบโฟลเดอร์
 export async function DELETE(request: NextRequest) {
   try {
-    const { dataset, folderName } = await request.json();
+    const pool = await ensureDbInitialized();
+    const { folderId } = await request.json();
     
-    if (!dataset || !folderName) {
-      return NextResponse.json({ error: 'Dataset and folder name are required' }, { status: 400 });
+    if (!folderId) {
+      return NextResponse.json({ error: 'Folder ID is required' }, { status: 400 });
     }
-
-    const connection = await pool.getConnection();
     
     // ดึงรายการตารางในโฟลเดอร์
-    const [tables]: any = await connection.query(
-      'SELECT table_name FROM folder_tables WHERE dataset_name = ? AND folder_name = ?',
-      [dataset, folderName]
+    const tablesResult = await pool.query(
+      'SELECT table_name FROM folder_tables WHERE folder_id = ?',
+      [folderId]
     );
+
+    const tables = tablesResult.rows || tablesResult;
 
     // ลบตารางจริงจากฐานข้อมูล
     for (const table of tables) {
       try {
-        await connection.query(`DROP TABLE IF EXISTS \`${dataset}\`.\`${table.table_name}\``);
-        console.log(`Deleted table: ${dataset}.${table.table_name}`);
+        await pool.query(`DROP TABLE IF EXISTS \`${table.table_name}\``);
+        console.log(`Deleted table: ${table.table_name}`);
       } catch (error) {
         console.error(`Error deleting table ${table.table_name}:`, error);
       }
 
       // ลบ sync_config ของตารางนี้ด้วย
       try {
-        await connection.query(
-          'DELETE FROM sync_config WHERE dataset_name = ? AND table_name = ?',
-          [dataset, table.table_name]
+        await pool.query(
+          'DELETE FROM sync_config WHERE table_name = ?',
+          [table.table_name]
         );
       } catch (error) {
         console.error(`Error deleting sync_config for ${table.table_name}:`, error);
       }
     }
     
-    // ลบความสัมพันธ์ใน folder_tables
-    await connection.query(
-      'DELETE FROM folder_tables WHERE dataset_name = ? AND folder_name = ?',
-      [dataset, folderName]
+    // ลบโฟลเดอร์ (folder_tables จะถูกลบอัตโนมัติด้วย CASCADE)
+    await pool.query(
+      'DELETE FROM folders WHERE id = ?',
+      [folderId]
     );
-
-    // ลบโฟลเดอร์
-    await connection.query(
-      'DELETE FROM folders WHERE dataset_name = ? AND folder_name = ?',
-      [dataset, folderName]
-    );
-    
-    connection.release();
     
     return NextResponse.json({ 
       success: true,

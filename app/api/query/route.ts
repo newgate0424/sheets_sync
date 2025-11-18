@@ -1,25 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { ensureDbInitialized } from '@/lib/dbAdapter';
 
 export async function POST(request: NextRequest) {
   try {
-    const { query } = await request.json();
+    const pool = await ensureDbInitialized();
+    const { query, params } = await request.json();
     
     if (!query) {
       return NextResponse.json({ error: 'Query is required' }, { status: 400 });
     }
     
-    console.log('Executing query:', query);
-    
-    const connection = await pool.getConnection();
+    console.log('Executing query:', query, params ? `with params: ${JSON.stringify(params)}` : '');
     
     try {
-      const [rows] = await connection.query(query);
-      connection.release();
-      
-      return NextResponse.json({ rows });
+      const result = params 
+        ? await pool.query(query, params)
+        : await pool.query(query);
+      return NextResponse.json({ rows: result.rows });
     } catch (queryError: any) {
-      connection.release();
       console.error('Query error:', queryError.message, 'Query:', query);
       return NextResponse.json({ error: queryError.message }, { status: 400 });
     }

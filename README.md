@@ -1,6 +1,6 @@
-# Next.js MySQL Manager
+# Next.js PostgreSQL Manager
 
-เว็บไซต์จัดการฐานข้อมูล MySQL ที่มี UI คล้าย Google BigQuery
+เว็บไซต์จัดการฐานข้อมูล PostgreSQL ที่มี UI คล้าย Google BigQuery
 
 ## ฟีเจอร์
 
@@ -8,7 +8,7 @@
 - ✅ หน้า Database Explorer - เรียกดู datasets และ tables
 - ✅ Query Editor - รัน SQL queries
 - ✅ หน้า Logs - ติดตามกิจกรรมของระบบ
-- ✅ เชื่อมต่อกับ MySQL Database
+- ✅ เชื่อมต่อกับ PostgreSQL Database
 
 ## การติดตั้ง
 
@@ -17,26 +17,27 @@
 npm install
 ```
 
-2. ตั้งค่าการเชื่อมต่อ MySQL ใน `.env.local`:
+2. ตั้งค่าการเชื่อมต่อ PostgreSQL ใน `.env.local`:
 ```env
-DB_HOST=localhost
-DB_USER=root
-DB_PASSWORD=your_password
-DB_NAME=mysql_manager
-DB_PORT=3306
+DATABASE_URL="postgresql://postgres:password@localhost:5432/ads_data"
 ```
 
-3. สร้าง database ใน MySQL:
+3. สร้าง database ใน PostgreSQL:
 ```sql
-CREATE DATABASE mysql_manager;
+CREATE DATABASE ads_data;
 ```
 
-4. รันโปรเจค:
+4. รันการ migrate ฐานข้อมูล:
+```bash
+npm run migrate
+```
+
+5. รันโปรเจค:
 ```bash
 npm run dev
 ```
 
-5. เปิดเบราว์เซอร์ที่ http://localhost:3000
+6. เปิดเบราว์เซอร์ที่ http://localhost:3000
 
 ## โครงสร้างโปรเจค
 
@@ -56,7 +57,7 @@ npm run dev
 │   ├── Header.tsx          # Header component
 │   └── Sidebar.tsx         # Sidebar component
 └── lib/
-    └── db.ts               # MySQL connection
+    └── db.ts               # PostgreSQL connection
 ```
 
 ## Stack
@@ -64,7 +65,7 @@ npm run dev
 - **Next.js 14** - React Framework
 - **TypeScript** - Type Safety
 - **Tailwind CSS** - Styling
-- **MySQL2** - Database Connection
+- **pg** - PostgreSQL Client
 - **Lucide React** - Icons
 
 ## หน้าต่างๆ
@@ -85,6 +86,6 @@ npm run dev
 
 ## หมายเหตุ
 
-- ตรวจสอบให้แน่ใจว่า MySQL server กำลังทำงาน
-- แก้ไข credentials ใน `.env.local` ให้ถูกต้อง
+- ตรวจสอบให้แน่ใจว่า PostgreSQL server กำลังทำงาน
+- แก้ไข DATABASE_URL ใน `.env.local` ให้ถูกต้อง
 - Layout ปรับขนาดอัตโนมัติตามขนาดหน้าจอ (responsive)

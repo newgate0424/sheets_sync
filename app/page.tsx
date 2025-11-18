@@ -31,7 +31,7 @@ export default function Home() {
             ยินดีต้อนรับสู่ระบบจัดการฐานข้อมูล
           </h1>
           <p className="text-xl text-gray-600">
-            จัดการและดูข้อมูล MySQL ของคุณได้อย่างง่ายดาย
+            จัดการและดูข้อมูล PostgreSQL ของคุณได้อย่างง่ายดาย
           </p>
         </div>
 
@@ -45,7 +45,7 @@ export default function Home() {
                 Database Explorer
               </h2>
               <p className="text-gray-600">
-                สำรวจและจัดการ Datasets และ Tables ในฐานข้อมูล MySQL ของคุณ
+                สำรวจและจัดการ Datasets และ Tables ในฐานข้อมูล PostgreSQL ของคุณ
               </p>
             </div>
           </Link>

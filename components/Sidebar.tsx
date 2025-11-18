@@ -60,7 +60,12 @@ export default function Sidebar({ isOpen, onClose, collapsed = false }: SidebarP
                 <li key={item.href}>
                   <Link
                     href={item.href}
-                    onClick={onClose}
+                    onClick={() => {
+                      // ปิด sidebar เฉพาะบน mobile
+                      if (window.innerWidth < 1024) {
+                        onClose();
+                      }
+                    }}
                     className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
                       isActive
                         ? 'bg-blue-500 text-white shadow-sm'
@@ -80,8 +85,8 @@ export default function Sidebar({ isOpen, onClose, collapsed = false }: SidebarP
         {(!collapsed || isOpen) && (
           <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-200 bg-gray-50">
             <div className="text-sm text-gray-600">
-              <p className="font-medium">Connected to MySQL</p>
-              <p className="text-xs mt-1 text-gray-500">Version 8.0</p>
+              <p className="font-medium">Connected to PostgreSQL</p>
+              <p className="text-xs mt-1 text-gray-500">Version 15+</p>
             </div>
           </div>
         )}

@@ -8,15 +8,18 @@ import Sidebar from '@/components/Sidebar';
 
 interface SyncLog {
   id: number;
-  status: 'running' | 'success' | 'error' | 'skipped';
+  status: 'running' | 'success' | 'error' | 'skipped' | 'failed';
   table_name: string;
-  dataset_name: string;
+  folder_name?: string;
+  spreadsheet_id?: string;
+  sheet_name?: string;
   started_at: string;
   completed_at: string | null;
-  duration_seconds: number | null;
-  inserted: number;
-  updated: number;
-  deleted: number;
+  sync_duration: number | null;
+  rows_synced: number;
+  rows_inserted: number;
+  rows_updated: number;
+  rows_deleted: number;
   error_message: string | null;
 }
 
@@ -55,7 +58,7 @@ function LogPageContent() {
 
   const filteredLogs = logs.filter(log => {
     const matchesSearch = log.table_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         log.dataset_name.toLowerCase().includes(searchTerm.toLowerCase());
+                         (log.folder_name && log.folder_name.toLowerCase().includes(searchTerm.toLowerCase()));
     // แปลง skipped เป็น success ในการกรอง
     const displayStatus = log.status === 'skipped' ? 'success' : log.status;
     const matchesStatus = filterStatus === 'all' || displayStatus === filterStatus;
@@ -141,6 +144,7 @@ function LogPageContent() {
                   <th className="px-4 py-3 text-right font-semibold text-gray-700">Inserted</th>
                   <th className="px-4 py-3 text-right font-semibold text-gray-700">Updated</th>
                   <th className="px-4 py-3 text-right font-semibold text-gray-700">Deleted</th>
+                  <th className="px-4 py-3 text-right font-semibold text-gray-700">Total Rows</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-700">Error</th>
                 </tr>
               </thead>
@@ -167,43 +171,26 @@ function LogPageContent() {
                       <td className="px-4 py-3">
                         <div>
                           <div className="font-medium text-gray-900">{log.table_name}</div>
-                          <div className="text-xs text-gray-500">{log.dataset_name}</div>
+                          {log.folder_name && <div className="text-xs text-gray-500">{log.folder_name}</div>}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
                         {formatDateTime(log.started_at)}
                       </td>
                       <td className="px-4 py-3 text-gray-600">
-                        {formatDuration(log.duration_seconds)}
+                        {formatDuration(log.sync_duration)}
                       </td>
-                      <td className="px-4 py-3 text-center text-gray-600" colSpan={3}>
-                        {isSkipped ? (
-                          <span className="text-gray-500 italic text-sm">ไม่มีอัปเดต</span>
-                        ) : (
-                          <div className="grid grid-cols-3 gap-2 text-center">
-                            <div>
-                              {log.inserted > 0 ? (
-                                <span className="text-green-600 font-medium">+{log.inserted}</span>
-                              ) : (
-                                <span className="text-gray-400">-</span>
-                              )}
-                            </div>
-                            <div>
-                              {log.updated > 0 ? (
-                                <span className="text-blue-600 font-medium">{log.updated}</span>
-                              ) : (
-                                <span className="text-gray-400">-</span>
-                              )}
-                            </div>
-                            <div>
-                              {log.deleted > 0 ? (
-                                <span className="text-red-600 font-medium">-{log.deleted}</span>
-                              ) : (
-                                <span className="text-gray-400">-</span>
-                              )}
-                            </div>
-                          </div>
-                        )}
+                      <td className="px-4 py-3 text-right text-green-600 font-medium">
+                        +{log.rows_inserted || 0}
+                      </td>
+                      <td className="px-4 py-3 text-right text-blue-600 font-medium">
+                        {log.rows_updated || 0}
+                      </td>
+                      <td className="px-4 py-3 text-right text-red-600 font-medium">
+                        -{log.rows_deleted || 0}
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-900 font-bold">
+                        {log.rows_synced?.toLocaleString() || 0}
                       </td>
                       <td className="px-4 py-3">
                         {log.error_message ? (
@@ -230,25 +217,44 @@ function LogPageContent() {
 export default function LogPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     const checkDesktop = () => {
       setIsDesktop(window.innerWidth >= 1024);
     };
     
     checkDesktop();
-    setSidebarOpen(window.innerWidth >= 1024);
+    
+    // อ่านค่า sidebar state จาก localStorage
+    const savedState = localStorage.getItem('sidebarOpen');
+    if (savedState !== null) {
+      setSidebarOpen(savedState === 'true');
+    } else {
+      setSidebarOpen(window.innerWidth >= 1024);
+    }
     
     window.addEventListener('resize', checkDesktop);
     return () => window.removeEventListener('resize', checkDesktop);
   }, []);
+  
+  const handleSidebarToggle = () => {
+    const newState = !sidebarOpen;
+    setSidebarOpen(newState);
+    localStorage.setItem('sidebarOpen', String(newState));
+  };
+
+  if (!mounted) {
+    return null;
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} collapsed={!sidebarOpen && isDesktop} />
-      <Header onMenuClick={() => setSidebarOpen(!sidebarOpen)} sidebarOpen={sidebarOpen} />
+      <Header onMenuClick={handleSidebarToggle} sidebarOpen={sidebarOpen} />
       
-      <main className={`transition-all duration-300 pt-16 ${sidebarOpen && isDesktop ? 'lg:ml-64' : 'lg:ml-20'}`}>
+      <main className={`transition-all duration-300 ${sidebarOpen && isDesktop ? 'ml-64' : 'ml-16'} pt-16`}>
         <div className="p-4 md:p-6 lg:p-8">
           <LogPageContent />
         </div>

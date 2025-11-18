@@ -9,9 +9,24 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // ตรวจสอบ session cookie
+  // ตรวจสอบ session cookie และ validate
   const sessionCookie = request.cookies.get('session');
-  const isAuthenticated = !!sessionCookie;
+  let isAuthenticated = false;
+  let userRole = null;
+
+  if (sessionCookie) {
+    try {
+      const session = JSON.parse(sessionCookie.value);
+      // ตรวจสอบว่า session มีข้อมูลครบถ้วน
+      if (session.userId && session.username && session.role) {
+        isAuthenticated = true;
+        userRole = session.role;
+      }
+    } catch (error) {
+      // ถ้า parse ไม่ได้ = session เสีย ให้ลบ cookie
+      isAuthenticated = false;
+    }
+  }
 
   // หน้า login
   if (pathname === '/login') {
@@ -23,24 +38,20 @@ export function middleware(request: NextRequest) {
   }
 
   // หน้าที่ต้อง login
-  const protectedPaths = ['/database', '/log', '/users'];
+  const protectedPaths = ['/database', '/log', '/users', '/settings'];
   const isProtectedPath = protectedPaths.some(path => pathname.startsWith(path));
 
   if (isProtectedPath && !isAuthenticated) {
-    return NextResponse.redirect(new URL('/login', request.url));
+    const response = NextResponse.redirect(new URL('/login', request.url));
+    // ลบ cookie ที่เสียหาย
+    response.cookies.delete('session');
+    return response;
   }
 
-  // หน้า users เฉพาะ admin
-  if (pathname.startsWith('/users')) {
-    if (sessionCookie) {
-      try {
-        const session = JSON.parse(sessionCookie.value);
-        if (session.role !== 'admin') {
-          return NextResponse.redirect(new URL('/database', request.url));
-        }
-      } catch {
-        return NextResponse.redirect(new URL('/login', request.url));
-      }
+  // หน้า users และ settings เฉพาะ admin
+  if (pathname.startsWith('/users') || pathname.startsWith('/settings')) {
+    if (userRole !== 'admin') {
+      return NextResponse.redirect(new URL('/database', request.url));
     }
   }
 
@@ -61,6 +72,7 @@ export const config = {
     '/database/:path*',
     '/log/:path*',
     '/users/:path*',
+    '/settings/:path*',
     '/login'
   ]
 };

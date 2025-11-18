@@ -1,40 +1,108 @@
 import { NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { ensureDbInitialized } from '@/lib/dbAdapter';
+import { getMongoDb } from '@/lib/mongoDb';
 
 export async function GET() {
   try {
-    const connection = await pool.getConnection();
+    const pool = await ensureDbInitialized();
     
-    // Get all databases
-    const [databases]: any = await connection.query('SHOW DATABASES');
+    // Get dbType from MongoDB settings
+    const mongoDb = await getMongoDb();
+    const settings = await mongoDb.collection('settings').findOne({ key: 'database_connection' });
+    const dbType = settings?.dbType || 'mysql';
     
-    const datasets = await Promise.all(
-      databases
-        .filter((db: any) => db.Database === process.env.DB_NAME || db.Database === 'bigquery' || db.Database === 'sacom_bigquery')
-        .map(async (db: any) => {
-          const dbName = db.Database;
-          
-          // Get tables for this database
-          const [tables]: any = await connection.query(`SHOW TABLE STATUS FROM \`${dbName}\``);
-          
-          // กรองตารางระบบออก (folders, folder_tables, sync_config, sync_logs, users)
-          const filteredTables = tables.filter((table: any) => 
-            !['folders', 'folder_tables', 'sync_config', 'sync_logs', 'users'].includes(table.Name)
-          );
-          
-          return {
-            name: dbName,
-            tables: filteredTables.map((table: any) => ({
-              name: table.Name,
-              rows: table.Rows || 0,
-              size: formatBytes(table.Data_length + table.Index_length),
-            })),
-            expanded: false,
-          };
-        })
+    // Get current database name
+    let databaseName = 'database';
+    try {
+      if (dbType === 'mysql') {
+        const dbNameResult = await pool.query('SELECT DATABASE() as db_name');
+        databaseName = dbNameResult.rows[0]?.db_name || 'database';
+      } else {
+        const dbNameResult = await pool.query('SELECT current_database() as db_name');
+        databaseName = dbNameResult.rows[0]?.db_name || 'database';
+      }
+    } catch (err) {
+      console.error('Error getting database name:', err);
+    }
+    
+    // Get all tables from current database
+    let tablesQuery: string;
+    if (dbType === 'mysql') {
+      tablesQuery = `
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = DATABASE()
+        AND table_type = 'BASE TABLE'
+      `;
+    } else {
+      tablesQuery = `
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_type = 'BASE TABLE'
+      `;
+    }
+    
+    const result = await pool.query(tablesQuery);
+    const tables = result.rows;
+    
+    // กรองตารางระบบออก (folders, folder_tables, sync_config, sync_logs, users)
+    const filteredTables = tables.filter((table: any) => 
+      !['folders', 'folder_tables', 'sync_config', 'sync_logs', 'users'].includes(table.table_name)
     );
     
-    connection.release();
+    // Fetch row counts and sizes for all tables in parallel
+    const tableInfoPromises = filteredTables.map(async (table: any) => {
+      try {
+        const tableName = table.table_name;
+        
+        // Get row count
+        const countQuery = dbType === 'mysql' 
+          ? `SELECT COUNT(*) as count FROM \`${tableName}\``
+          : `SELECT COUNT(*) as count FROM "${tableName}"`;
+        const countResult = await pool.query(countQuery);
+        const rowCount = parseInt(countResult.rows[0].count);
+        
+        // Get table size
+        let tableSize = 0;
+        if (dbType === 'mysql') {
+          const sizeResult = await pool.query(`
+            SELECT 
+              data_length + index_length as size
+            FROM information_schema.TABLES
+            WHERE table_schema = DATABASE()
+            AND table_name = ?
+          `, [tableName]);
+          tableSize = parseInt(sizeResult.rows[0]?.size || 0);
+        } else {
+          const sizeResult = await pool.query(`
+            SELECT pg_total_relation_size($1) as size
+          `, [tableName]);
+          tableSize = parseInt(sizeResult.rows[0].size);
+        }
+        
+        return {
+          name: tableName,
+          rows: rowCount,
+          size: formatBytes(tableSize),
+        };
+      } catch (err) {
+        console.error(`Error fetching info for table ${table.table_name}:`, err);
+        return {
+          name: table.table_name,
+          rows: 0,
+          size: '0 B',
+        };
+      }
+    });
+    
+    const tablesWithInfo = await Promise.all(tableInfoPromises);
+    
+    const datasets = [{
+      name: databaseName,
+      tables: tablesWithInfo,
+      expanded: false,
+    }];
     
     return NextResponse.json(datasets);
   } catch (error: any) {

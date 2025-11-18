@@ -22,6 +22,7 @@ interface Dataset {
 }
 
 interface Folder {
+  id?: number;
   name: string;
   expanded: boolean;
   tables: TableInfo[];
@@ -55,6 +56,8 @@ function DatabasePageContent() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalRows, setTotalRows] = useState(0);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [syncProgress, setSyncProgress] = useState<{ [key: string]: { status: 'syncing' | 'success' | 'error', message?: string } }>({});
+  const [tableSyncLoading, setTableSyncLoading] = useState<{ [key: string]: boolean }>({});
   
   // Save activeTab to localStorage whenever it changes
   const handleTabChange = (tab: 'schema' | 'details' | 'preview') => {
@@ -112,7 +115,7 @@ function DatabasePageContent() {
     const tableData = { dataset: datasetName, table: tableName, folderName: folderName };
     setSelectedTable(tableData);
     setSelectedFolder(null);
-    setQuery(`SELECT * FROM ${datasetName}.${tableName} LIMIT ${rowsPerPage};`);
+    setQuery(`SELECT * FROM "${tableName}" LIMIT ${rowsPerPage};`);
     setActiveTab('preview');
     setCurrentPage(1);
     setFilteredData(null);
@@ -162,38 +165,30 @@ function DatabasePageContent() {
       const datasetsData = await datasetsRes.json();
       const foldersData = await foldersRes.json();
       
-      // จัดกลุ่มโฟลเดอร์และตารางตาม dataset
-      const foldersByDataset: any = {};
-      foldersData.folders.forEach((folder: any) => {
-        if (!foldersByDataset[folder.dataset_name]) {
-          foldersByDataset[folder.dataset_name] = [];
-        }
-        foldersByDataset[folder.dataset_name].push({
-          name: folder.folder_name,
-          expanded: false,
-          tables: []
-        });
-      });
+      // จัดเตรียมโฟลเดอร์
+      const folders = foldersData.folders.map((folder: any) => ({
+        id: folder.id,
+        name: folder.name,
+        description: folder.description,
+        expanded: false,
+        tables: []
+      }));
       
       // Load expanded states from localStorage
       const savedExpandedDatasets = JSON.parse(localStorage.getItem('expandedDatasets') || '{}');
       const savedExpandedFolders = JSON.parse(localStorage.getItem('expandedFolders') || '{}');
       
+      // จัดกลุ่มตารางตาม folder_id
+      const folderTableMap: any = {};
+      foldersData.folderTables.forEach((ft: any) => {
+        if (!folderTableMap[ft.folder_id]) {
+          folderTableMap[ft.folder_id] = [];
+        }
+        folderTableMap[ft.folder_id].push(ft.table_name);
+      });
+      
       // รวมข้อมูล datasets กับ folders และกระจายตารางไปในโฟลเดอร์
       const datasetsWithFolders = datasetsData.map((ds: any) => {
-        const folders = foldersByDataset[ds.name] || [];
-        const folderTableMap: any = {};
-        
-        // จัดกลุ่มตารางใน folder_tables
-        foldersData.folderTables.forEach((ft: any) => {
-          if (ft.dataset_name === ds.name) {
-            if (!folderTableMap[ft.folder_name]) {
-              folderTableMap[ft.folder_name] = [];
-            }
-            folderTableMap[ft.folder_name].push(ft.table_name);
-          }
-        });
-        
         // กรองตารางที่อยู่ใน folder ออกจาก ds.tables
         const tablesInFolders = new Set(
           Object.values(folderTableMap).flat() as string[]
@@ -209,7 +204,7 @@ function DatabasePageContent() {
           return {
             ...folder,
             expanded: savedExpandedFolders[folderKey] || false,
-            tables: (folderTableMap[folder.name] || []).map((tableName: string) => {
+            tables: (folderTableMap[folder.id] || []).map((tableName: string) => {
               const tableInfo = ds.tables.find((t: any) => t.name === tableName);
               return tableInfo || { name: tableName, rows: 0, size: '0 B' };
             })
@@ -308,8 +303,8 @@ function DatabasePageContent() {
     setOpenMenu(null);
   };
 
-  const deleteFolder = (datasetName: string, folderName: string) => {
-    setShowDialog({ type: 'deleteFolder', dataset: datasetName, folder: folderName });
+  const deleteFolder = (datasetName: string, folderId: number) => {
+    setShowDialog({ type: 'deleteFolder', dataset: datasetName, folder: String(folderId) });
     setOpenMenu(null);
   };
 
@@ -329,16 +324,92 @@ function DatabasePageContent() {
     setOpenMenu(null);
   };
 
-  const handleDialogConfirm = () => {
+  const handleDialogConfirm = async () => {
     if (!showDialog) return;
 
     switch (showDialog.type) {
+      case 'switchDatabase':
+        if (dialogInput.trim()) {
+          try {
+            // ดึง DATABASE_URL ปัจจุบัน (ใช้ original ที่ไม่ได้ mask password)
+            const settingsResponse = await fetch('/api/settings/database');
+            const settingsData = await settingsResponse.json();
+            
+            if (settingsData.original) {
+              // เปลี่ยน database name ใน connection string (ใช้ original ที่มี password จริง)
+              const newDbUrl = settingsData.original.replace(/\/[^/?]*(\?|$)/, `/${dialogInput.trim()}$1`);
+              
+              // ทดสอบ connection ก่อน
+              showToast(`กำลังตรวจสอบ ${dialogInput.trim()}...`, 'info');
+              const testResponse = await fetch('/api/settings/database/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ connectionString: newDbUrl })
+              });
+              
+              const testResult = await testResponse.json();
+              
+              if (!testResponse.ok || !testResult.success) {
+                showToast(testResult.error || `ไม่พบฐานข้อมูล ${dialogInput.trim()}`, 'error');
+                return;
+              }
+              
+              // อัพเดท DATABASE_URL
+              const updateResponse = await fetch('/api/settings/database', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ connectionString: newDbUrl })
+              });
+              
+              const updateResult = await updateResponse.json();
+              
+              if (updateResponse.ok) {
+                showToast(`เปลี่ยนไปใช้ ${dialogInput.trim()} สำเร็จ กำลังสร้างตารางที่จำเป็น...`, 'success');
+                
+                // สร้างตารางที่จำเป็นอัตโนมัติ
+                try {
+                  // ดึง dbType จาก settings
+                  const dbType = settingsData.dbType || (settingsData.original?.startsWith('mysql://') ? 'mysql' : 'postgresql');
+                  
+                  const migrateResponse = await fetch('/api/settings/database/migrate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ dbType })
+                  });
+                  
+                  if (migrateResponse.ok) {
+                    showToast('สร้างตารางที่จำเป็นเรียบร้อย', 'success');
+                  }
+                } catch (migrateError) {
+                  console.error('Migration error:', migrateError);
+                }
+                
+                // ปิด dialog ก่อน
+                setShowDialog(null);
+                setDialogInput('');
+                // รอให้ connection reset และ reload หน้า
+                setTimeout(() => {
+                  window.location.reload();
+                }, 1500);
+              } else {
+                showToast(updateResult.error || 'ไม่สามารถเปลี่ยนฐานข้อมูลได้', 'error');
+              }
+            } else {
+              showToast('ไม่พบข้อมูลการเชื่อมต่อ', 'error');
+            }
+          } catch (error: any) {
+            console.error('Error switching database:', error);
+            showToast(error.message || 'เกิดข้อผิดพลาด', 'error');
+          }
+        }
+        break;
+        
       case 'createFolder':
         if (dialogInput.trim()) {
           fetch('/api/folders', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dataset: showDialog.dataset, folderName: dialogInput.trim() })
+            body: JSON.stringify({ folderName: dialogInput.trim(), description: '' })
           }).then(() => fetchDatasets());
         }
         break;
@@ -357,7 +428,7 @@ function DatabasePageContent() {
         fetch('/api/folders', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dataset: showDialog.dataset, folderName: showDialog.folder })
+          body: JSON.stringify({ folderId: parseInt(showDialog.folder || '0') })
         }).then(() => fetchDatasets());
         break;
 
@@ -374,14 +445,15 @@ function DatabasePageContent() {
         fetch('/api/query', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: `DROP TABLE IF EXISTS \`${showDialog.dataset}\`.\`${showDialog.oldName}\`` })
+          body: JSON.stringify({ query: `DROP TABLE IF EXISTS "${showDialog.oldName}"` })
         }).then(async () => {
           // ลบ sync_config ด้วย
           await fetch('/api/query', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
-              query: `DELETE FROM sync_config WHERE dataset_name = '${showDialog.dataset}' AND table_name = '${showDialog.oldName}'`
+              query: `DELETE FROM sync_config WHERE dataset_name = $1 AND table_name = $2`,
+              params: [showDialog.dataset, showDialog.oldName]
             })
           });
           fetchDatasets();
@@ -504,6 +576,88 @@ function DatabasePageContent() {
     setSyncLoading(false);
   };
 
+  const syncAllTablesInFolder = async (datasetName: string, folderName: string, tables: TableInfo[]) => {
+    if (tables.length === 0) {
+      showToast('ไม่มีตารางในโฟลเดอร์นี้', 'info');
+      return;
+    }
+
+    // Set loading for all tables in this folder
+    const newTableLoading: { [key: string]: boolean } = {};
+    tables.forEach(table => {
+      newTableLoading[`${datasetName}.${table.name}`] = true;
+    });
+    setTableSyncLoading(prev => ({ ...prev, ...newTableLoading }));
+
+    const newProgress: { [key: string]: { status: 'syncing' | 'success' | 'error', message?: string } } = {};
+    
+    // เริ่มต้น progress สำหรับทุกตาราง
+    tables.forEach(table => {
+      newProgress[table.name] = { status: 'syncing' };
+    });
+    setSyncProgress(newProgress);
+
+    // Sync ทุกตารางพร้อมกัน
+    const syncPromises = tables.map(async (table) => {
+      try {
+        const response = await fetch('/api/sync-table', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            dataset: datasetName,
+            tableName: table.name
+          }),
+        });
+        const data = await response.json();
+        
+        if (response.ok) {
+          setSyncProgress(prev => ({
+            ...prev,
+            [table.name]: { status: 'success', message: `${data.rowCount} แถว` }
+          }));
+          return { success: true, table: table.name, rowCount: data.rowCount };
+        } else {
+          setSyncProgress(prev => ({
+            ...prev,
+            [table.name]: { status: 'error', message: data.error }
+          }));
+          return { success: false, table: table.name, error: data.error };
+        }
+      } catch (error) {
+        setSyncProgress(prev => ({
+          ...prev,
+          [table.name]: { status: 'error', message: 'เกิดข้อผิดพลาด' }
+        }));
+        return { success: false, table: table.name, error: String(error) };
+      }
+    });
+
+    const results = await Promise.all(syncPromises);
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.filter(r => !r.success).length;
+    
+    // Clear loading for all tables
+    const clearTableLoading: { [key: string]: boolean } = {};
+    tables.forEach(table => {
+      clearTableLoading[`${datasetName}.${table.name}`] = false;
+    });
+    setTableSyncLoading(prev => ({ ...prev, ...clearTableLoading }));
+    
+    if (failCount === 0) {
+      showToast(`ซิงค์สำเร็จทั้งหมด ${successCount} ตาราง`, 'success');
+    } else if (successCount === 0) {
+      showToast(`ซิงค์ล้มเหลวทั้งหมด ${failCount} ตาราง`, 'error');
+    } else {
+      showToast(`ซิงค์สำเร็จ ${successCount} ตาราง, ล้มเหลว ${failCount} ตาราง`, 'info');
+    }
+    
+    // ล้าง progress หลังจาก 3 วินาที
+    setTimeout(() => setSyncProgress({}), 3000);
+    
+    // Refresh datasets
+    await fetchDatasets();
+  };
+
   const selectTable = async (datasetName: string, tableName: string, folderName?: string) => {
     // หา folderName จาก datasets ถ้าไม่ได้รับมา
     if (!folderName && datasets.length > 0) {
@@ -521,7 +675,7 @@ function DatabasePageContent() {
     const tableData = { dataset: datasetName, table: tableName, folderName: folderName };
     setSelectedTable(tableData);
     setSelectedFolder(null); // ล้างการเลือกโฟลเดอร์
-    setQuery(`SELECT * FROM ${datasetName}.${tableName} LIMIT ${rowsPerPage};`);
+    setQuery(`SELECT * FROM \"${tableName}\" LIMIT ${rowsPerPage};`);
     setActiveTab('preview');
     setCurrentPage(1); // Reset ไปหน้าแรก
     setFilteredData(null); // ล้างการค้นหา
@@ -547,7 +701,10 @@ function DatabasePageContent() {
       const response = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: `DESCRIBE \`${datasetName}\`.\`${tableName}\`` }),
+        body: JSON.stringify({ 
+          query: `SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = $1 ORDER BY ordinal_position`,
+          params: [tableName]
+        }),
       });
       const data = await response.json();
       setTableSchema(data);
@@ -562,7 +719,7 @@ function DatabasePageContent() {
       const countResponse = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: `SELECT COUNT(*) as total FROM \`${datasetName}\`.\`${tableName}\`` }),
+        body: JSON.stringify({ query: `SELECT COUNT(*) as total FROM "${tableName}"` }),
       });
       const countData = await countResponse.json();
       const total = countData.rows?.[0]?.total || 0;
@@ -573,7 +730,7 @@ function DatabasePageContent() {
       const response = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: `SELECT * FROM \`${datasetName}\`.\`${tableName}\` LIMIT ${limit} OFFSET ${offset}` }),
+        body: JSON.stringify({ query: `SELECT * FROM "${tableName}" LIMIT ${limit} OFFSET ${offset}` }),
       });
       const data = await response.json();
       setQueryResult(data);
@@ -605,12 +762,13 @@ function DatabasePageContent() {
     }
 
     try {
-      // ดึงชื่อคอลัมน์จากตารางโดยใช้ SHOW COLUMNS
+      // ดึงชื่อคอลัมน์จากตารางโดยใช้ information_schema
       const columnsResponse = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          query: `SHOW COLUMNS FROM \`${selectedTable.dataset}\`.\`${selectedTable.table}\``
+          query: `SELECT column_name as "Field" FROM information_schema.columns WHERE table_name = $1 ORDER BY ordinal_position`,
+          params: [selectedTable.table]
         }),
       });
       
@@ -624,20 +782,20 @@ function DatabasePageContent() {
       // ดึงชื่อคอลัมน์จาก Field
       const columns = columnsData.rows.map((row: any) => row.Field);
       
-      // Escape single quotes เพื่อป้องกัน SQL injection
-      const escapedSearchValue = searchValue.replace(/'/g, "''");
-      
-      // สร้าง SQL query สำหรับค้นหาในทุกคอลัมน์
+      // สร้าง SQL query สำหรับค้นหาในทุกคอลัมน์ แบบใช้ parameterized query
       const whereConditions = columns.map((col: string) => 
-        `CAST(\`${col}\` AS CHAR) LIKE '%${escapedSearchValue}%'`
+        `CAST("${col}" AS TEXT) ILIKE $1`
       ).join(' OR ');
       
-      const searchQuery = `SELECT * FROM \`${selectedTable.dataset}\`.\`${selectedTable.table}\` WHERE ${whereConditions} LIMIT 1000`;
+      const searchQuery = `SELECT * FROM "${selectedTable.table}" WHERE ${whereConditions} LIMIT 1000`;
       
       const response = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: searchQuery }),
+        body: JSON.stringify({ 
+          query: searchQuery,
+          params: [`%${searchValue}%`]
+        }),
       });
       
       const data = await response.json();
@@ -663,10 +821,12 @@ function DatabasePageContent() {
       {/* Sidebar - Datasets & Tables */}
       <div className="w-75 flex-shrink-0 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full">
         <div className="p-4 border-b border-gray-200 bg-gray-50">
-          <h2 className="font-semibold text-gray-800 flex items-center gap-2">
-            <Database className="w-5 h-5 text-blue-500" />
-            Datasets
-          </h2>
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="font-semibold text-gray-800 flex items-center gap-2">
+              <Database className="w-5 h-5 text-blue-500" />
+              {datasets.length > 0 && datasets[0].name ? datasets[0].name : 'Database'}
+            </h2>
+          </div>
           <div className="mt-2 relative">
             <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
             <input
@@ -746,6 +906,20 @@ function DatabasePageContent() {
                               <span className="text-sm text-gray-700">{folder.name}</span>
                               <span className="ml-auto text-xs text-gray-500">{folder.tables.length}</span>
                             </button>
+                            {/* Sync All Icon Button */}
+                            {folder.tables.length > 0 && (
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  await syncAllTablesInFolder(dataset.name, folder.name, folder.tables);
+                                }}
+                                disabled={folder.tables.some(t => tableSyncLoading[`${dataset.name}.${t.name}`])}
+                                className="p-1 hover:bg-gray-200 rounded opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                                title="Sync All Tables"
+                              >
+                                <RefreshCw className={`w-3 h-3 text-blue-600 ${folder.tables.some(t => tableSyncLoading[`${dataset.name}.${t.name}`]) ? 'animate-spin' : ''}`} />
+                              </button>
+                            )}
                             <div className="relative">
                               <button
                                 onClick={(e) => {
@@ -773,7 +947,7 @@ function DatabasePageContent() {
                                     เปลี่ยนชื่อโฟลเดอร์
                                   </button>
                                   <button
-                                    onClick={() => deleteFolder(dataset.name, folder.name)}
+                                    onClick={() => deleteFolder(dataset.name, folder.id!)}
                                     className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50"
                                   >
                                     <Trash2 className="w-4 h-4" />
@@ -800,7 +974,19 @@ function DatabasePageContent() {
                                     <Table2 className="w-4 h-4 text-gray-400" />
                                     <div className="flex-1 min-w-0">
                                       <div className="text-sm text-gray-700 truncate">{table.name}</div>
-                                      <div className="text-xs text-gray-500">{table.rows} rows · {table.size}</div>
+                                      <div className="text-xs text-gray-500 flex items-center gap-2">
+                                        <span>{table.rows} rows · {table.size}</span>
+                                        {(tableSyncLoading[`${dataset.name}.${table.name}`] || syncProgress[table.name]) && (
+                                          <span className={`font-medium ${
+                                            tableSyncLoading[`${dataset.name}.${table.name}`] || syncProgress[table.name]?.status === 'syncing' ? 'text-blue-500' :
+                                            syncProgress[table.name]?.status === 'success' ? 'text-green-500' :
+                                            'text-red-500'
+                                          }`}>
+                                            {tableSyncLoading[`${dataset.name}.${table.name}`] || syncProgress[table.name]?.status === 'syncing' ? '⟳ syncing...' : 
+                                             syncProgress[table.name]?.status === 'success' ? '✓ done' : '✗ failed'}
+                                          </span>
+                                        )}
+                                      </div>
                                     </div>
                                   </button>
                                   <div className="relative">
@@ -818,7 +1004,8 @@ function DatabasePageContent() {
                                         <button
                                           onClick={async () => {
                                             setOpenMenu(null);
-                                            setSyncLoading(true);
+                                            const tableKey = `${dataset.name}.${table.name}`;
+                                            setTableSyncLoading(prev => ({ ...prev, [tableKey]: true }));
                                             try {
                                               const response = await fetch('/api/sync-table', {
                                                 method: 'PUT',
@@ -828,17 +1015,19 @@ function DatabasePageContent() {
                                               const data = await response.json();
                                               if (response.ok) {
                                                 showToast(`ซิงค์ข้อมูลสำเร็จ: ${data.rowCount} แถว`, 'success');
+                                                await fetchDatasets();
                                               } else {
                                                 showToast(data.error || 'ไม่สามารถซิงค์ข้อมูลได้', 'error');
                                               }
                                             } catch (error) {
                                               showToast('เกิดข้อผิดพลาด', 'error');
                                             }
-                                            setSyncLoading(false);
+                                            setTableSyncLoading(prev => ({ ...prev, [tableKey]: false }));
                                           }}
-                                          className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                          disabled={tableSyncLoading[`${dataset.name}.${table.name}`]}
+                                          className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
                                         >
-                                          <RefreshCw className="w-4 h-4" />
+                                          <RefreshCw className={`w-4 h-4 ${tableSyncLoading[`${dataset.name}.${table.name}`] ? 'animate-spin' : ''}`} />
                                           ซิงค์ข้อมูล
                                         </button>
                                         <button
@@ -1075,20 +1264,24 @@ function DatabasePageContent() {
                 </button>
                 <button 
                   onClick={async () => {
-                    setSyncLoading(true);
+                    if (!selectedTable) return;
+                    const tableKey = `${selectedTable.dataset}.${selectedTable.table}`;
+                    setTableSyncLoading(prev => ({ ...prev, [tableKey]: true }));
                     await executeQueryForTable(selectedTable.dataset, selectedTable.table);
                     await fetchDatasets();
-                    setSyncLoading(false);
+                    setTableSyncLoading(prev => ({ ...prev, [tableKey]: false }));
                   }}
-                  disabled={syncLoading}
+                  disabled={selectedTable ? tableSyncLoading[`${selectedTable.dataset}.${selectedTable.table}`] : true}
                   className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm disabled:bg-gray-200"
                 >
-                  <RefreshCw className={`w-4 h-4 ${syncLoading ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`w-4 h-4 ${selectedTable && tableSyncLoading[`${selectedTable.dataset}.${selectedTable.table}`] ? 'animate-spin' : ''}`} />
                   Refresh
                 </button>
                 <button 
                   onClick={async () => {
-                    setSyncLoading(true);
+                    if (!selectedTable) return;
+                    const tableKey = `${selectedTable.dataset}.${selectedTable.table}`;
+                    setTableSyncLoading(prev => ({ ...prev, [tableKey]: true }));
                     try {
                       const response = await fetch('/api/sync-table', {
                         method: 'PUT',
@@ -1106,23 +1299,30 @@ function DatabasePageContent() {
                     } catch (error) {
                       showToast('เกิดข้อผิดพลาด', 'error');
                     }
-                    setSyncLoading(false);
+                    setTableSyncLoading(prev => ({ ...prev, [tableKey]: false }));
                   }}
-                  disabled={syncLoading}
+                  disabled={selectedTable ? tableSyncLoading[`${selectedTable.dataset}.${selectedTable.table}`] : true}
                   className="flex items-center gap-2 px-3 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm disabled:bg-gray-300"
                 >
-                  <RefreshCw className={`w-4 h-4 ${syncLoading ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`w-4 h-4 ${selectedTable && tableSyncLoading[`${selectedTable.dataset}.${selectedTable.table}`] ? 'animate-spin' : ''}`} />
                   Sync
                 </button>
                 <button 
-                  onClick={() => {
-                    const token = process.env.NEXT_PUBLIC_CRON_TOKEN || 'default-secret-token';
-                    const baseUrl = window.location.origin;
-                    const syncUrl = `${baseUrl}/api/sync-cron?token=${token}&dataset=${selectedTable.dataset}&table=${selectedTable.table}`;
-                    navigator.clipboard.writeText(syncUrl);
-                    showToast('คัดลอก Sync URL สำเร็จ! สามารถนำไปใช้กับ Cron Job ได้', 'success');
+                  onClick={async () => {
+                    if (!selectedTable) return;
+                    try {
+                      const tokenRes = await fetch('/api/cron-token');
+                      const { token } = await tokenRes.json();
+                      const baseUrl = window.location.origin;
+                      const syncUrl = `${baseUrl}/api/sync-cron?token=${token}&dataset=${selectedTable.dataset}&table=${selectedTable.table}`;
+                      navigator.clipboard.writeText(syncUrl);
+                      showToast('คัดลอก Sync URL สำเร็จ! สามารถนำไปใช้กับ Cron Job ได้', 'success');
+                    } catch (error) {
+                      showToast('เกิดข้อผิดพลาดในการดึง token', 'error');
+                    }
                   }}
-                  className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm"
+                  disabled={!selectedTable}
+                  className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm disabled:bg-gray-200"
                 >
                   Copy Sync URL
                 </button>
@@ -1508,6 +1708,7 @@ function DatabasePageContent() {
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
             <div className="p-6">
               <h3 className="text-lg font-semibold text-gray-800 mb-4">
+                {showDialog.type === 'switchDatabase' && 'เปลี่ยนฐานข้อมูล'}
                 {showDialog.type === 'createFolder' && 'สร้างโฟลเดอร์ใหม่'}
                 {showDialog.type === 'renameFolder' && 'เปลี่ยนชื่อโฟลเดอร์'}
                 {showDialog.type === 'deleteFolder' && 'ยืนยันการลบโฟลเดอร์'}
@@ -1526,6 +1727,7 @@ function DatabasePageContent() {
               ) : (
                 <div className="mb-6">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
+                    {showDialog.type === 'switchDatabase' && 'ชื่อฐานข้อมูล'}
                     {showDialog.type === 'createFolder' && 'ชื่อโฟลเดอร์'}
                     {showDialog.type === 'renameFolder' && 'ชื่อโฟลเดอร์ใหม่'}
                     {showDialog.type === 'createTable' && 'ชื่อตาราง'}
@@ -1537,12 +1739,18 @@ function DatabasePageContent() {
                     onKeyPress={(e) => e.key === 'Enter' && handleDialogConfirm()}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder={
+                      showDialog.type === 'switchDatabase' ? 'กรอกชื่อฐานข้อมูลที่ต้องการเปลี่ยนไป' :
                       showDialog.type === 'createFolder' ? 'กรอกชื่อโฟลเดอร์' :
                       showDialog.type === 'renameFolder' ? 'กรอกชื่อโฟลเดอร์ใหม่' :
                       'กรอกชื่อตาราง'
                     }
                     autoFocus
                   />
+                  {showDialog.type === 'switchDatabase' && (
+                    <p className="mt-2 text-xs text-gray-500">
+                      ชื่อฐานข้อมูลสามารถใช้ได้เฉพาะตัวอักษร ตัวเลข และขีดล่าง (_)
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -1823,23 +2031,42 @@ function DatabasePageContent() {
 export default function DatabasePage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     const checkDesktop = () => {
       setIsDesktop(window.innerWidth >= 1024);
     };
     
     checkDesktop();
-    setSidebarOpen(window.innerWidth >= 1024);
+    
+    // อ่านค่า sidebar state จาก localStorage
+    const savedState = localStorage.getItem('sidebarOpen');
+    if (savedState !== null) {
+      setSidebarOpen(savedState === 'true');
+    } else {
+      setSidebarOpen(window.innerWidth >= 1024);
+    }
     
     window.addEventListener('resize', checkDesktop);
     return () => window.removeEventListener('resize', checkDesktop);
   }, []);
+  
+  const handleSidebarToggle = () => {
+    const newState = !sidebarOpen;
+    setSidebarOpen(newState);
+    localStorage.setItem('sidebarOpen', String(newState));
+  };
+
+  if (!mounted) {
+    return null;
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} collapsed={!sidebarOpen && isDesktop} />
-      <Header onMenuClick={() => setSidebarOpen(!sidebarOpen)} sidebarOpen={sidebarOpen} />
+      <Header onMenuClick={handleSidebarToggle} sidebarOpen={sidebarOpen} />
       
       <main className={`transition-all duration-300 pt-16 ${sidebarOpen && isDesktop ? 'lg:ml-64' : 'lg:ml-20'}`}>
         <div className="p-4 md:p-6 lg:p-8">

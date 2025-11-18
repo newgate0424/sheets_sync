@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { getMongoDb } from '@/lib/mongoDb';
 import bcrypt from 'bcrypt';
 
 // POST - Login
@@ -11,21 +11,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'กรุณากรอก username และ password' }, { status: 400 });
     }
 
-    const connection = await pool.getConnection();
-
+    const db = await getMongoDb();
+    
     // ค้นหา user
-    const [users]: any = await connection.query(
-      'SELECT * FROM users WHERE username = ? AND is_active = true',
-      [username]
-    );
+    const user = await db.collection('users').findOne({ 
+      username, 
+      is_active: { $ne: false } // ไม่รวม user ที่ is_active = false
+    });
 
-    connection.release();
-
-    if (users.length === 0) {
+    if (!user) {
       return NextResponse.json({ error: 'Username หรือ Password ไม่ถูกต้อง' }, { status: 401 });
     }
-
-    const user = users[0];
 
     // ตรวจสอบ password
     const isPasswordValid = await bcrypt.compare(password, user.password);
@@ -35,13 +31,16 @@ export async function POST(request: NextRequest) {
     }
 
     // อัปเดต last_login
-    await pool.query('UPDATE users SET last_login = NOW() WHERE id = ?', [user.id]);
+    await db.collection('users').updateOne(
+      { _id: user._id },
+      { $set: { last_login: new Date() } }
+    );
 
     // สร้าง session (ใช้ cookie)
     const response = NextResponse.json({
       success: true,
       user: {
-        id: user.id,
+        id: user._id.toString(),
         username: user.username,
         full_name: user.full_name,
         role: user.role
@@ -50,7 +49,7 @@ export async function POST(request: NextRequest) {
 
     // ตั้งค่า cookie สำหรับ session
     response.cookies.set('session', JSON.stringify({
-      userId: user.id,
+      userId: user._id.toString(),
       username: user.username,
       full_name: user.full_name,
       role: user.role

@@ -1,23 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { ensureDbInitialized } from '@/lib/dbAdapter';
 
 // POST - สร้างตารางในโฟลเดอร์
 export async function POST(request: NextRequest) {
   try {
+    const pool = await ensureDbInitialized();
     const { dataset, folderName, tableName } = await request.json();
     
     if (!dataset || !folderName || !tableName) {
       return NextResponse.json({ error: 'Dataset, folder name, and table name are required' }, { status: 400 });
     }
-
-    const connection = await pool.getConnection();
     
-    await connection.query(
-      'INSERT INTO folder_tables (dataset_name, folder_name, table_name) VALUES (?, ?, ?)',
+    await pool.query(
+      'INSERT INTO folder_tables (dataset_name, folder_name, table_name) VALUES ($1, $2, $3)',
       [dataset, folderName, tableName]
     );
-    
-    connection.release();
     
     return NextResponse.json({ success: true });
   } catch (error: any) {
@@ -29,20 +26,17 @@ export async function POST(request: NextRequest) {
 // DELETE - ลบตารางจากโฟลเดอร์
 export async function DELETE(request: NextRequest) {
   try {
+    const pool = await ensureDbInitialized();
     const { dataset, folderName, tableName } = await request.json();
     
     if (!dataset || !folderName || !tableName) {
       return NextResponse.json({ error: 'Dataset, folder name, and table name are required' }, { status: 400 });
     }
-
-    const connection = await pool.getConnection();
     
-    await connection.query(
-      'DELETE FROM folder_tables WHERE dataset_name = ? AND folder_name = ? AND table_name = ?',
+    await pool.query(
+      'DELETE FROM folder_tables WHERE dataset_name = $1 AND folder_name = $2 AND table_name = $3',
       [dataset, folderName, tableName]
     );
-    
-    connection.release();
     
     return NextResponse.json({ success: true });
   } catch (error: any) {

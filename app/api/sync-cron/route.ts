@@ -1,67 +1,68 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { ensureDbInitialized } from '@/lib/dbAdapter';
 import { getGoogleSheetsClient } from '@/lib/googleSheets';
-import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
 
-// ฟังก์ชันคำนวณ checksum จาก Google Sheets data
-function calculateChecksum(rows: any[][]): string {
-  if (rows.length === 0) return '';
-  
-  const dataToHash = JSON.stringify({
-    rowCount: rows.length,
-    firstRow: rows[0],
-    lastRow: rows[rows.length - 1],
-    middleRow: rows[Math.floor(rows.length / 2)]
-  });
-  
-  return crypto.createHash('md5').update(dataToHash).digest('hex');
-}
-
 // GET - API สำหรับ Cron Job เรียกใช้ sync อัตโนมัติ
 export async function GET(request: NextRequest) {
+  const pool = await ensureDbInitialized();
   const startTime = Date.now();
   let logId: number | null = null;
   
   try {
     const searchParams = request.nextUrl.searchParams;
     const token = searchParams.get('token');
-    const dataset = searchParams.get('dataset');
     const tableName = searchParams.get('table');
 
     // ตรวจสอบ token (ใช้ environment variable)
-    const validToken = process.env.CRON_SYNC_TOKEN || 'default-secret-token';
+    const validToken = process.env.CRON_SYNC_TOKEN || 'your-secret-token-here-change-this';
     
     if (token !== validToken) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
 
-    if (!dataset || !tableName) {
-      return NextResponse.json({ error: 'Dataset and table name are required' }, { status: 400 });
+    if (!tableName) {
+      return NextResponse.json({ error: 'Table name is required' }, { status: 400 });
     }
 
-    const connection = await pool.getConnection();
-
-    // สร้าง log entry
-    const [logResult]: any = await connection.query(
-      'INSERT INTO sync_logs (status, table_name, dataset_name) VALUES (?, ?, ?)',
-      ['running', tableName, dataset]
-    );
-    logId = logResult.insertId;
-
-    // ดึง sync config
-    const [configs]: any = await connection.query(
-      'SELECT * FROM sync_config WHERE dataset_name = ? AND table_name = ?',
-      [dataset, tableName]
+    // ดึง sync config ก่อนเพื่อเอา folder_name
+    const configResult = await pool.query(
+      'SELECT * FROM sync_config WHERE table_name = ?',
+      [tableName]
     );
 
-    if (configs.length === 0) {
-      connection.release();
-      return NextResponse.json({ error: 'Sync config not found' }, { status: 404 });
+    const configs = configResult.rows || configResult;
+
+    if (!Array.isArray(configs) || configs.length === 0) {
+      return NextResponse.json({ 
+        error: 'Sync config not found for table: ' + tableName
+      }, { status: 404 });
     }
 
     const config = configs[0];
+    
+    const folderName = config?.folder_name || 'default';
+    const spreadsheetId = config?.spreadsheet_id;
+    const sheetName = config?.sheet_name;
+
+    if (!spreadsheetId || !sheetName) {
+      return NextResponse.json({ 
+        error: 'Missing spreadsheet_id or sheet_name in config'
+      }, { status: 400 });
+    }
+
+    // สร้าง log entry
+    await pool.query(
+      'INSERT INTO sync_logs (status, table_name, folder_name) VALUES (?, ?, ?)',
+      ['running', tableName, folderName]
+    );
+    
+    // ดึง insertId ด้วย LAST_INSERT_ID() เพราะ pool.query ไม่ return insertId
+    const idResult: any = await pool.query('SELECT LAST_INSERT_ID() as id');
+    logId = idResult[0]?.id || idResult.rows?.[0]?.id || null;
+    console.log(`[Cron] Created log entry with ID: ${logId}`);
+
     const sheets = await getGoogleSheetsClient();
 
     // ดึงข้อมูลจาก Google Sheets แบบไม่จำกัดจำนวนแถว
@@ -74,12 +75,12 @@ export async function GET(request: NextRequest) {
 
     while (hasMore) {
       const endRow = startRow + batchSize - 1;
-      const range = `${config.sheet_name}!A${startRow}:ZZ${endRow}`;
+      const range = `${sheetName}!A${startRow}:ZZ${endRow}`;
       
       console.log(`[Cron] Fetching rows ${startRow} to ${endRow}...`);
       
       const response = await sheets.spreadsheets.values.get({
-        spreadsheetId: config.spreadsheet_id,
+        spreadsheetId: spreadsheetId,
         range: range,
       });
 
@@ -106,107 +107,88 @@ export async function GET(request: NextRequest) {
     const rows = allRows;
     
     if (rows.length <= 1) {
-      connection.release();
       return NextResponse.json({ error: 'No data to sync' }, { status: 404 });
     }
 
-    // คำนวณ checksum ของข้อมูลใหม่
-    const newChecksum = calculateChecksum(rows);
-    const oldChecksum = config.last_checksum;
-
-    console.log(`[Cron] Checksum - Old: ${oldChecksum}, New: ${newChecksum}`);
-
-    // ถ้า checksum เหมือนเดิม = ข้อมูลไม่เปลี่ยน → ข้าม sync
-    if (oldChecksum && oldChecksum === newChecksum) {
-      console.log(`[Cron] Data unchanged, skipping sync for ${tableName}`);
-      
-      // อัปเดต skip_count
-      await connection.query(
-        'UPDATE sync_config SET skip_count = skip_count + 1 WHERE dataset_name = ? AND table_name = ?',
-        [dataset, tableName]
-      );
-
-      // อัปเดท log - skipped
-      const duration = Math.floor((Date.now() - startTime) / 1000);
-      if (logId) {
-        await connection.query(
-          `UPDATE sync_logs 
-           SET status = 'skipped', 
-               completed_at = NOW(), 
-               duration_seconds = ?,
-               inserted = 0,
-               updated = 0,
-               deleted = 0
-           WHERE id = ?`,
-          [duration, logId]
-        );
-      }
-
-      connection.release();
-
-      return NextResponse.json({ 
-        success: true, 
-        skipped: true,
-        message: `[Cron] Sync skipped - data unchanged (checksum: ${newChecksum})`,
-        stats: {
-          inserted: 0,
-          updated: 0,
-          deleted: 0,
-          total: rows.length - 1
-        },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    console.log(`[Cron] Data changed, proceeding with sync...`);
+    console.log(`[Cron] Proceeding with sync for ${tableName}...`);
 
     const headers = rows[0];
     const dataRows = rows.slice(1);
 
-    // เตรียมชื่อคอลัมน์
+    // เตรียมชื่อคอลัมน์ สำหรับ MySQL
     const columnNames = headers.map((h: string) => 
       `\`${h.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase()}\``
     ).join(', ');
 
+    let actualInsertedCount = 0;
     let insertedCount = 0;
     let updatedCount = 0;
     let deletedCount = 0;
 
     // นับจำนวนแถวเดิม
-    const [countResult]: any = await connection.query(`SELECT COUNT(*) as count FROM \`${dataset}\`.\`${tableName}\``);
-    const oldRowCount = countResult[0]?.count || 0;
+    const countResult: any = await pool.query(`SELECT COUNT(*) as count FROM \`${tableName}\``);
+    const oldRowCount = parseInt(countResult[0]?.count || 0);
 
-    // ลบข้อมูลเก่าทั้งหมด
-    await connection.query(`TRUNCATE TABLE \`${dataset}\`.\`${tableName}\``);
-    deletedCount = oldRowCount;
+    console.log(`[Cron] Preparing to sync ${dataRows.length} rows (old: ${oldRowCount})...`);
 
-    console.log(`[Cron] Deleted ${deletedCount} old rows, inserting ${dataRows.length} new rows...`);
+    // เริ่ม transaction เพื่อความเร็ว
+    await pool.query('START TRANSACTION');
 
-    // Insert ข้อมูลใหม่แบบ batch
-    if (dataRows.length > 0) {
-      const batchSize = 1000;
-      
-      for (let i = 0; i < dataRows.length; i += batchSize) {
-        const batch = dataRows.slice(i, i + batchSize);
+    try {
+      // ลบข้อมูลเก่าทั้งหมด (TRUNCATE เร็วกว่า DELETE)
+      await pool.query(`TRUNCATE TABLE \`${tableName}\``);
+      deletedCount = oldRowCount;
+
+      // Insert ข้อมูลใหม่แบบ batch ขนาดใหญ่
+      if (dataRows.length > 0) {
+        // คำนวณ batch size ตาม column count (MySQL limit 65,535 placeholders)
+        const maxPlaceholders = 65000; // เผื่อ buffer
+        const columnsCount = headers.length;
+        const maxRowsPerBatch = Math.floor(maxPlaceholders / columnsCount);
+        const batchSize = Math.min(maxRowsPerBatch, dataRows.length > 100000 ? 10000 : 5000);
         
-        const values = batch.map(row => {
-          const vals = headers.map((_: any, index: number) => {
-            const val = row[index];
-            return val !== undefined && val !== '' ? connection.escape(val) : 'NULL';
-          }).join(', ');
-          return `(${vals})`;
-        }).join(', ');
+        for (let i = 0; i < dataRows.length; i += batchSize) {
+          const batch = dataRows.slice(i, i + batchSize);
+          
+          // สร้าง parameterized query สำหรับ MySQL
+          const placeholders: string[] = [];
+          const values: any[] = [];
+          
+          batch.forEach(row => {
+            const rowPlaceholders = headers.map(() => '?').join(', ');
+            placeholders.push(`(${rowPlaceholders})`);
+            headers.forEach((_: any, index: number) => {
+              const val = row[index];
+              values.push(val !== undefined && val !== '' ? val : null);
+            });
+          });
 
-        await connection.query(
-          `INSERT INTO \`${dataset}\`.\`${tableName}\` (${columnNames}) VALUES ${values}`
-        );
-        
-        insertedCount += batch.length;
-        console.log(`[Cron] Inserted ${insertedCount}/${dataRows.length} rows...`);
+          await pool.query(
+            `INSERT INTO \`${tableName}\` (${columnNames}) VALUES ${placeholders.join(', ')}`,
+            values
+          );
+          
+          actualInsertedCount += batch.length;
+          
+          // Log ทุก 50,000 แถว เพื่อลด overhead
+          if (actualInsertedCount % 50000 === 0 || actualInsertedCount === dataRows.length) {
+            console.log(`[Cron] Inserted ${actualInsertedCount}/${dataRows.length} rows...`);
+          }
+        }
       }
+
+      // Commit transaction
+      await pool.query('COMMIT');
+      
+      console.log(`[Cron] Transaction committed successfully`);
+
+    } catch (error) {
+      // Rollback ถ้า error
+      await pool.query('ROLLBACK');
+      throw error;
     }
 
-    // คำนวณสถิติ
+    // คำนวณ updated (ถ้าแถวเท่าเดิม = update, ถ้าแถวมากกว่า = insert)
     if (dataRows.length > oldRowCount) {
       updatedCount = oldRowCount;
       insertedCount = dataRows.length - oldRowCount;
@@ -222,33 +204,41 @@ export async function GET(request: NextRequest) {
 
     console.log(`[Cron] Sync completed: ${insertedCount} inserted, ${updatedCount} updated, ${deletedCount} deleted`);
 
-    // อัพเดท last_sync และ checksum
-    await connection.query(
-      'UPDATE sync_config SET last_sync = NOW(), last_checksum = ?, skip_count = 0 WHERE dataset_name = ? AND table_name = ?',
-      [newChecksum, dataset, tableName]
+    // อัพเดท last_sync
+    await pool.query(
+      'UPDATE sync_config SET last_sync = NOW() WHERE table_name = ?',
+      [tableName]
     );
 
     // อัพเดท log - success
     const duration = Math.floor((Date.now() - startTime) / 1000);
+    console.log(`[Cron] About to update log ${logId} to success...`);
     if (logId) {
-      await connection.query(
-        `UPDATE sync_logs 
-         SET status = 'success', 
-             completed_at = NOW(), 
-             duration_seconds = ?,
-             inserted = ?,
-             updated = ?,
-             deleted = ?
-         WHERE id = ?`,
-        [duration, insertedCount, updatedCount, deletedCount, logId]
-      );
+      try {
+        console.log(`[Cron] Updating log ${logId} to success...`);
+        const updateResult = await pool.query(
+          `UPDATE sync_logs 
+           SET status = ?, 
+               completed_at = NOW(), 
+               sync_duration = ?,
+               rows_inserted = ?,
+               rows_updated = ?,
+               rows_deleted = ?,
+               rows_synced = ?
+           WHERE id = ?`,
+          ['success', duration, insertedCount, updatedCount, deletedCount, dataRows.length, logId]
+        );
+        console.log(`[Cron] Log ${logId} update result:`, updateResult);
+      } catch (updateError) {
+        console.error(`[Cron] Failed to update log ${logId}:`, updateError);
+      }
+    } else {
+      console.log('[Cron] No logId, skipping log update');
     }
-
-    connection.release();
 
     return NextResponse.json({ 
       success: true, 
-      message: `[Cron] Sync completed: ${insertedCount} inserted, ${updatedCount} updated, ${deletedCount} deleted`,
+      message: `[Cron] Sync completed successfully`,
       stats: {
         inserted: insertedCount,
         updated: updatedCount,
@@ -263,18 +253,16 @@ export async function GET(request: NextRequest) {
     // อัพเดท log - error
     if (logId) {
       try {
-        const connection = await pool.getConnection();
         const duration = Math.floor((Date.now() - startTime) / 1000);
-        await connection.query(
+        await pool.query(
           `UPDATE sync_logs 
-           SET status = 'error', 
+           SET status = ?, 
                completed_at = NOW(), 
-               duration_seconds = ?,
+               sync_duration = ?,
                error_message = ?
            WHERE id = ?`,
-          [duration, error.message, logId]
+          ['error', duration, error.message, logId]
         );
-        connection.release();
       } catch (logError) {
         console.error('[Cron] Error updating log:', logError);
       }
