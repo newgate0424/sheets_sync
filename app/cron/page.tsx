@@ -56,31 +56,22 @@ export default function CronPage() {
 
   useEffect(() => {
     setMounted(true);
-  }, []);
-
-  useEffect(() => {
+    
     // โหลดข้อมูลเริ่มต้น
     const initializeData = async () => {
-      await loadCronJobs();
-      
-      // เช็คว่ามี jobs ค้างหรือไม่
-      const hasStuckJobs = cronJobs.some(job => job.status === 'running');
-      if (hasStuckJobs) {
-        try {
-          await fetch('/api/cron-jobs/clear-stuck', { method: 'POST' });
-          await loadCronJobs(); // reload หลัง clear
-        } catch (error) {
-          console.log('Auto-clear stuck jobs failed:', error);
-        }
+      try {
+        await loadCronJobs();
+        await loadFolders();
+        await loadDatasets();
+        await loadCronLogs();
+      } catch (error) {
+        console.error('Error initializing data:', error);
       }
     };
     
     initializeData();
-    loadFolders();
-    loadDatasets(); // เพิ่มการโหลด datasets
-    loadCronLogs();
     
-    // Auto-refresh logs ทุก 30 วินาที (ลดความถี่)
+    // Auto-refresh logs ทุก 30 วินาที
     const interval = setInterval(() => {
       loadCronLogs();
     }, 30000);
@@ -91,10 +82,14 @@ export default function CronPage() {
   const loadCronJobs = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/cron-jobs');
+      const response = await fetch('/api/cron-jobs', {
+        headers: { 'Cache-Control': 'no-cache' },
+      });
       if (response.ok) {
         const data = await response.json();
         setCronJobs(data.jobs || []);
+      } else {
+        console.error('Failed to load cron jobs');
       }
     } catch (error) {
       console.error('Error loading cron jobs:', error);
@@ -105,10 +100,12 @@ export default function CronPage() {
 
   const loadCronLogs = async (jobId?: string) => {
     try {
-      const url = jobId 
+      const url = jobId
         ? `/api/cron-logs?jobId=${jobId}&limit=50`
         : '/api/cron-logs?limit=100';
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        headers: { 'Cache-Control': 'no-cache' },
+      });
       if (response.ok) {
         const data = await response.json();
         setCronLogs(data.logs || []);
@@ -120,7 +117,9 @@ export default function CronPage() {
 
   const loadFolders = async () => {
     try {
-      const response = await fetch('/api/folders');
+      const response = await fetch('/api/folders', {
+        headers: { 'Cache-Control': 'no-cache' },
+      });
       if (response.ok) {
         const data = await response.json();
         setFolders(data.folders || []);
@@ -132,7 +131,9 @@ export default function CronPage() {
 
   const loadDatasets = async () => {
     try {
-      const response = await fetch('/api/datasets');
+      const response = await fetch('/api/datasets', {
+        headers: { 'Cache-Control': 'no-cache' },
+      });
       if (response.ok) {
         const data = await response.json();
         setDatasets(data.datasets || []);
@@ -140,18 +141,19 @@ export default function CronPage() {
     } catch (error) {
       console.error('Error loading datasets:', error);
     }
-  };
-
-  const loadTables = async (folder: string) => {
+  };  const loadTables = async (folder: string) => {
     if (!folder) return;
     try {
-      const response = await fetch(`/api/folder-tables?folder=${folder}`);
+      const response = await fetch(`/api/folder-tables?folder=${encodeURIComponent(folder)}`, {
+        headers: { 'Cache-Control': 'no-cache' },
+      });
       if (response.ok) {
         const data = await response.json();
         setTables(data.tables || []);
       }
     } catch (error) {
       console.error('Error loading tables:', error);
+      setTables([]);
     }
   };
 
@@ -755,3 +757,4 @@ export default function CronPage() {
     </>
   );
 }
+

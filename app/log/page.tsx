@@ -31,18 +31,27 @@ function LogPageContent() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     fetchLogs();
     
-    // Auto-refresh ทุก 5 วินาที
-    const interval = setInterval(fetchLogs, 5000);
+    // Auto-refresh ทุก 10 วินาที (ลดความถี่)
+    const interval = setInterval(fetchLogs, 10000);
     return () => clearInterval(interval);
   }, []);
 
   const fetchLogs = async () => {
     try {
-      const response = await fetch('/api/sync-logs');
+      const response = await fetch('/api/sync-logs', {
+        headers: {
+          'Cache-Control': 'no-cache',
+        },
+      });
+      if (!response.ok) {
+        throw new Error('Failed to fetch logs');
+      }
       const data = await response.json();
       // เก็บแค่ 50 แถวล่าสุด
       setLogs(data.slice(0, 50));
@@ -212,5 +221,22 @@ function LogPageContent() {
 }
 
 export default function LogPage() {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return (
+      <div className="p-6">
+        <div className="animate-pulse">
+          <div className="h-8 bg-gray-200 rounded w-1/4 mb-4"></div>
+          <div className="h-64 bg-gray-200 rounded"></div>
+        </div>
+      </div>
+    );
+  }
+
   return <LogPageContent />;
 }
