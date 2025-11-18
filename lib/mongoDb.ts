@@ -11,6 +11,8 @@ export async function connectMongoDB(): Promise<Db> {
   const uri = process.env.DATABASE_USER_URL;
   
   if (!uri) {
+    console.error('❌ DATABASE_USER_URL is not configured in .env file');
+    console.error('📋 Please add: DATABASE_USER_URL=mongodb+srv://user:pass@cluster.mongodb.net/database');
     throw new Error('DATABASE_USER_URL is not configured');
   }
 

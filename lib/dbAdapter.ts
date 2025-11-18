@@ -44,6 +44,11 @@ class DatabaseAdapter {
       this.connectionString = this.customConnectionString;
     }
     
+    if (!this.connectionString) {
+      console.warn('⚠️  DATABASE_URL not set. Using in-memory mode (data will not persist).');
+      console.warn('📋 Please configure DATABASE_URL in .env file for persistent storage.');
+    }
+    
     this.type = this.detectDatabaseType();
     this.initializeConnection();
     this.initialized = true;
