@@ -289,10 +289,10 @@ function DatabasePageContent() {
       });
       
       setDatasets(datasetsWithFolders);
-      setLoading(false);
+      if (loading) setLoading(false);
     } catch (error) {
       console.error('Error fetching datasets:', error);
-      setLoading(false);
+      if (loading) setLoading(false);
     }
   };
 

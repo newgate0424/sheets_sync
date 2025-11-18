@@ -113,7 +113,13 @@ export async function GET() {
       expanded: false,
     }];
     
-    return NextResponse.json(datasets, {\n      headers: {\n        'Cache-Control': 'no-cache, no-store, must-revalidate',\n        'Pragma': 'no-cache',\n        'Expires': '0'\n      }\n    }); 
+    return NextResponse.json(datasets, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
+    });
   } catch (error: any) {
     console.error('Database error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

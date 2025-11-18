@@ -87,11 +87,7 @@ export default function CronPage() {
 
   const loadCronJobs = async (showRefresh = false) => {
     try {
-      if (showRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
+      if (showRefresh) setRefreshing(true);
       const response = await fetch('/api/cron-jobs', {
         headers: { 'Cache-Control': 'no-cache' },
       });
@@ -101,13 +97,13 @@ export default function CronPage() {
       } else {
         console.error('Failed to load cron jobs');
       }
+      if (loading) setLoading(false);
     } catch (error) {
       console.error('Error loading cron jobs:', error);
+      if (loading) setLoading(false);
     } finally {
       if (showRefresh) {
         setTimeout(() => setRefreshing(false), 500);
-      } else {
-        setLoading(false);
       }
     }
   };

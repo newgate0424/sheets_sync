@@ -57,10 +57,10 @@ function LogPageContent() {
       const data = await response.json();
       // เก็บแค่ 50 แถวล่าสุด
       setLogs(data.slice(0, 50));
-      setLoading(false);
+      if (loading) setLoading(false);
     } catch (error) {
       console.error('Error fetching logs:', error);
-      setLoading(false);
+      if (loading) setLoading(false);
     } finally {
       if (showRefresh) {
         setTimeout(() => setRefreshing(false), 500);
