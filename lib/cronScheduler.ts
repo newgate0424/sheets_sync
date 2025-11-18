@@ -65,10 +65,12 @@ async function executeSyncJob(job: CronJob) {
     });
     logId = logResult.insertedId;
     
-    // เรียก sync API ผ่าน localhost เสมอ (internal call ไม่ต้องผ่าน external domain)
-    // เพราะ cron ทำงานบน server เดียวกับ API
-    const apiUrl = 'http://localhost:3000/api/sync-table';
-    console.log(`[Cron] Calling internal API: ${apiUrl}`);
+    // เรียก sync API ผ่าน localhost พร้อมใช้ PORT ที่ถูกต้อง
+    // บน Plesk/Passenger อาจใช้ PORT ที่ต่างจาก 3000
+    const port = process.env.PORT || '3000';
+    const apiUrl = `http://127.0.0.1:${port}/api/sync-table`;
+    console.log(`[Cron] 🔧 Using PORT: ${port}`);
+    console.log(`[Cron] 📡 Calling internal API: ${apiUrl}`);
     
     // สร้าง timeout promise
     const timeoutPromise = new Promise((_, reject) => 
