@@ -11,6 +11,12 @@ interface QueryResult {
 
 // ฟังก์ชันดึง connection string จาก MongoDB
 async function getConnectionStringFromMongo(): Promise<string | null> {
+  // Skip MongoDB connection during build time if DATABASE_USER_URL is not set
+  if (!process.env.DATABASE_USER_URL) {
+    console.warn('DATABASE_USER_URL not set, skipping MongoDB connection');
+    return null;
+  }
+  
   try {
     const { getMongoDb } = await import('./mongoDb');
     const db = await getMongoDb();

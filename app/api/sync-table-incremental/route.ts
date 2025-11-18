@@ -27,6 +27,9 @@ function createRowHash(row: any[]): string {
 }
 
 // PUT - Incremental Sync ข้อมูลจาก Google Sheets
+// Force dynamic rendering to prevent build-time execution
+export const dynamic = 'force-dynamic';
+
 export async function PUT(request: NextRequest) {
   try {
     const pool = await ensureDbInitialized();

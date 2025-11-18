@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getGoogleSheetsClient } from '@/lib/googleSheets';
 
 // POST - ดึงข้อมูลจาก sheet เพื่อดู schema
+// Force dynamic rendering to prevent build-time execution
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     const { spreadsheetId, sheetName, startRow = 1, hasHeader = true } = await request.json();

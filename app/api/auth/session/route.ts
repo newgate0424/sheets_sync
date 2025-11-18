@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 // GET - ตรวจสอบ session
+// Force dynamic rendering to prevent build-time execution
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const sessionCookie = request.cookies.get('session');

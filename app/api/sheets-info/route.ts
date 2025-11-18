@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getGoogleSheetsClient, extractSpreadsheetId } from '@/lib/googleSheets';
 
 // GET - ดึงรายชื่อ sheets ทั้งหมดจาก Google Sheets
+// Force dynamic rendering to prevent build-time execution
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     const { spreadsheetUrl } = await request.json();

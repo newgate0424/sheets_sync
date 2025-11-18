@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { ensureDbInitialized } from '@/lib/dbAdapter';
 import { getMongoDb } from '@/lib/mongoDb';
 
+// Force dynamic rendering to prevent build-time execution
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const pool = await ensureDbInitialized();

@@ -4,6 +4,9 @@ import { getMongoDb } from '@/lib/mongoDb';
 import { resetDbConnection } from '@/lib/dbAdapter';
 
 // GET - ดึง connection string ปัจจุบันจาก MongoDB
+// Force dynamic rendering to prevent build-time execution
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const db = await getMongoDb();

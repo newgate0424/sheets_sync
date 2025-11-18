@@ -11,7 +11,11 @@ export async function connectMongoDB(): Promise<Db> {
   const uri = process.env.DATABASE_USER_URL;
   
   if (!uri) {
-    throw new Error('DATABASE_USER_URL is not configured');
+    // During build time, allow missing DATABASE_USER_URL
+    // It will be caught by getMongoDb() caller
+    const error = new Error('DATABASE_USER_URL is not configured');
+    console.warn('MongoDB connection skipped:', error.message);
+    throw error;
   }
 
   try {

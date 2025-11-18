@@ -3,6 +3,9 @@ import { getMongoDb } from '@/lib/mongoDb';
 import bcrypt from 'bcrypt';
 
 // POST - Login
+// Force dynamic rendering to prevent build-time execution
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     const { username, password } = await request.json();
