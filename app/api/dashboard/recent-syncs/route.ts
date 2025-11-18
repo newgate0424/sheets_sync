@@ -23,7 +23,13 @@ export async function GET() {
       duration: sync.duration || null
     }));
 
-    return NextResponse.json({ syncs: formattedSyncs }, {\n      headers: {\n        'Cache-Control': 'no-cache, no-store, must-revalidate',\n        'Pragma': 'no-cache',\n        'Expires': '0'\n      }\n    });
+    return NextResponse.json({ syncs: formattedSyncs }, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
+    });
   } catch (error: any) {
     console.error('Error fetching recent syncs:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
