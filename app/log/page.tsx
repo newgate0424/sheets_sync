@@ -29,6 +29,7 @@ const statusStyles = {
 function LogPageContent() {
   const [logs, setLogs] = useState<SyncLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [mounted, setMounted] = useState(false);
@@ -42,8 +43,9 @@ function LogPageContent() {
     return () => clearInterval(interval);
   }, []);
 
-  const fetchLogs = async () => {
+  const fetchLogs = async (showRefresh = false) => {
     try {
+      if (showRefresh) setRefreshing(true);
       const response = await fetch('/api/sync-logs', {
         headers: {
           'Cache-Control': 'no-cache',
@@ -59,6 +61,10 @@ function LogPageContent() {
     } catch (error) {
       console.error('Error fetching logs:', error);
       setLoading(false);
+    } finally {
+      if (showRefresh) {
+        setTimeout(() => setRefreshing(false), 500);
+      }
     }
   };
 
@@ -93,11 +99,11 @@ function LogPageContent() {
             Sync Logs
           </h1>
           <button
-            onClick={fetchLogs}
-            disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:bg-gray-300"
+            onClick={() => fetchLogs(true)}
+            disabled={loading || refreshing}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
             Refresh
           </button>
         </div>
