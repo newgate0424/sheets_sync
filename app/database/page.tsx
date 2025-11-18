@@ -128,6 +128,13 @@ function DatabasePageContent() {
     fetchDatabaseType();
     // รัน auto migration
     runAutoMigration();
+    
+    // Auto-refresh datasets ทุก 10 วินาที เพื่ออัปเดต rows และ size
+    const interval = setInterval(() => {
+      fetchDatasets();
+    }, 10000);
+    
+    return () => clearInterval(interval);
   }, []);
 
   const runAutoMigration = async () => {

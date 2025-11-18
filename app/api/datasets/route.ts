@@ -51,17 +51,24 @@ export async function GET() {
       !['folders', 'folder_tables', 'sync_config', 'sync_logs', 'users'].includes(table.table_name)
     );
     
-    // Fetch row counts and sizes for all tables in parallel
+    // Fetch row counts and sizes - ใช้ข้อมูลจาก sync_logs ล่าสุดแทน COUNT(*) เพื่อความเร็ว
     const tableInfoPromises = filteredTables.map(async (table: any) => {
       try {
         const tableName = table.table_name;
         
-        // Get row count
-        const countQuery = dbType === 'mysql' 
-          ? `SELECT COUNT(*) as count FROM \`${tableName}\``
-          : `SELECT COUNT(*) as count FROM "${tableName}"`;
-        const countResult = await pool.query(countQuery);
-        const rowCount = parseInt(countResult.rows[0].count);
+        // ดึงจาก sync_logs ล่าสุด (เร็วกว่า COUNT(*) มาก)
+        const syncLogQuery = `
+          SELECT rows_synced 
+          FROM sync_logs 
+          WHERE table_name = ${dbType === 'mysql' ? '?' : '$1'}
+          AND status = 'success'
+          ORDER BY started_at DESC 
+          LIMIT 1
+        `;
+        const syncLogResult = await pool.query(syncLogQuery, [tableName]);
+        const rowCount = syncLogResult.rows.length > 0 
+          ? parseInt(syncLogResult.rows[0].rows_synced || 0)
+          : 0;
         
         // Get table size
         let tableSize = 0;

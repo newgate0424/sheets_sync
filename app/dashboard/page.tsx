@@ -10,10 +10,20 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchDashboardData();
+    
+    // Auto-refresh ทุก 5 วินาที
+    const interval = setInterval(() => {
+      fetchDashboardData();
+    }, 5000);
+    
+    return () => clearInterval(interval);
   }, []);
 
   const fetchDashboardData = async () => {
-    setLoading(true);
+    // ไม่ต้อง setLoading(true) ในการ refresh เพื่อไม่ให้กระพริบ
+    const isInitialLoad = stats === null;
+    if (isInitialLoad) setLoading(true);
+    
     try {
       // ดึงข้อมูลสถิติ
       const [statsRes, syncsRes] = await Promise.all([

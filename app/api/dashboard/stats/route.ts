@@ -59,29 +59,25 @@ export async function GET() {
       console.error('Error counting folders:', error);
     }
 
-    // คำนวณจำนวนแถวรวม
+    // คำนวณจำนวนแถวรวมจาก sync_logs ล่าสุด (เร็วกว่าการ COUNT ทุกตาราง)
     let totalRows = 0;
     try {
-      const tables = await pool.query(
-        dbType === 'mysql' 
-          ? `SELECT \`table_name\` FROM \`sync_config\``
-          : `SELECT "table_name" FROM "sync_config"`
-      );
-      
-      for (const table of tables.rows) {
-        try {
-          const countQuery = dbType === 'mysql'
-            ? `SELECT COUNT(*) as cnt FROM \`${table.table_name}\``
-            : `SELECT COUNT(*) as cnt FROM "${table.table_name}"`;
-          const result = await pool.query(countQuery);
-          totalRows += parseInt(result.rows[0]?.cnt || 0);
-        } catch (error) {
-          // ตารางอาจถูกลบไปแล้ว ข้าม
-          continue;
-        }
-      }
+      // ดึง rows_synced จาก sync log ล่าสุดของแต่ละตาราง
+      const rowsQuery = `
+        SELECT COALESCE(SUM(rows_synced), 0) as total
+        FROM sync_logs sl1
+        WHERE status = 'success'
+        AND started_at = (
+          SELECT MAX(started_at) 
+          FROM sync_logs sl2 
+          WHERE sl2.table_name = sl1.table_name 
+          AND sl2.status = 'success'
+        )
+      `;
+      const rowsResult = await pool.query(rowsQuery);
+      totalRows = parseInt(rowsResult.rows[0]?.total || 0);
     } catch (error) {
-      console.error('Error counting total rows:', error);
+      console.error('Error counting total rows from sync_logs:', error);
     }
 
     // คำนวณอัตราสำเร็จ (จากข้อมูล sync_logs)
