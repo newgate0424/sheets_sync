@@ -32,8 +32,12 @@ export async function POST(request: NextRequest) {
     );
     
     try {
-      // เรียก sync API
-      const syncResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/sync-table`, {
+      // เรียก sync API ผ่าน internal localhost
+      const port = process.env.PORT || '3000';
+      const apiUrl = `http://127.0.0.1:${port}/api/sync-table`;
+      console.log(`[Run Job] Calling internal API: ${apiUrl} for table: ${job.table}`);
+      
+      const syncResponse = await fetch(apiUrl, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
