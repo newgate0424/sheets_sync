@@ -37,8 +37,8 @@ function LogPageContent() {
     setMounted(true);
     fetchLogs();
     
-    // Auto-refresh ทุก 10 วินาที (ลดความถี่)
-    const interval = setInterval(fetchLogs, 10000);
+    // Auto-refresh ทุก 2 วินาที เพื่อให้เห็น log แบบเรียลไทม์
+    const interval = setInterval(fetchLogs, 2000);
     return () => clearInterval(interval);
   }, []);
 
