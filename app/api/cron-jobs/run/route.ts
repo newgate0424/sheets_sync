@@ -5,8 +5,12 @@ import { ObjectId } from 'mongodb';
 // POST - รัน cron job ทันที
 export async function POST(request: NextRequest) {
   try {
+    console.log('[Run Job] Starting manual job execution...');
+    
     const db = await getMongoDb();
     const { jobId } = await request.json();
+    
+    console.log('[Run Job] Job ID:', jobId);
     
     if (!jobId) {
       return NextResponse.json({ error: 'Job ID is required' }, { status: 400 });
@@ -16,8 +20,11 @@ export async function POST(request: NextRequest) {
     const job = await db.collection('cron_jobs').findOne({ _id: new ObjectId(jobId) });
     
     if (!job) {
+      console.error('[Run Job] Job not found:', jobId);
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
     }
+    
+    console.log('[Run Job] Found job:', job.name, 'table:', job.table);
     
     // อัพเดทสถานะเป็น running
     await db.collection('cron_jobs').updateOne(
@@ -70,6 +77,13 @@ export async function POST(request: NextRequest) {
         throw new Error(syncData.error || 'Sync failed');
       }
     } catch (syncError: any) {
+      console.error('[Run Job] Sync error:', syncError);
+      console.error('[Run Job] Error details:', {
+        message: syncError.message,
+        cause: syncError.cause,
+        code: syncError.code
+      });
+      
       // อัพเดทสถานะเป็น failed
       await db.collection('cron_jobs').updateOne(
         { _id: new ObjectId(jobId) },
@@ -84,11 +98,12 @@ export async function POST(request: NextRequest) {
       
       return NextResponse.json({ 
         success: false, 
-        error: syncError.message 
+        error: `Sync failed: ${syncError.message}` 
       }, { status: 500 });
     }
   } catch (error: any) {
-    console.error('Database error:', error);
+    console.error('[Run Job] Fatal error:', error);
+    console.error('[Run Job] Error stack:', error.stack);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
