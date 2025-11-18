@@ -23,7 +23,7 @@ function calculateChecksum(rows: any[][]): string {
 export async function POST(request: NextRequest) {
   try {
     const pool = await ensureDbInitialized();
-    const { dataset, folderName, tableName, spreadsheetId, sheetName, schema } = await request.json();
+    const { dataset, folderName, tableName, spreadsheetId, sheetName, schema, startRow = 1, hasHeader = true } = await request.json();
     
     if (!dataset || !tableName || !spreadsheetId || !sheetName || !schema) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -47,52 +47,48 @@ export async function POST(request: NextRequest) {
     const settings = await mongoDb.collection('settings').findOne({ key: 'database_connection' });
     const dbType = settings?.dbType || 'mysql';
 
-    // บันทึก sync config (ใช้เฉพาะ table_name, spreadsheet_id, sheet_name)
+    // บันทึก sync config พร้อม startRow และ hasHeader
     if (dbType === 'mysql') {
       await pool.query(
-        `INSERT INTO sync_config (table_name, spreadsheet_id, sheet_name, folder_name, dataset_name) 
-         VALUES (?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE spreadsheet_id = VALUES(spreadsheet_id), sheet_name = VALUES(sheet_name)`,
-        [tableName, spreadsheetId, sheetName, folderName || '', dataset]
+        `INSERT INTO sync_config (table_name, spreadsheet_id, sheet_name, folder_name, dataset_name, start_row, has_header) 
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE spreadsheet_id = VALUES(spreadsheet_id), sheet_name = VALUES(sheet_name), start_row = VALUES(start_row), has_header = VALUES(has_header)`,
+        [tableName, spreadsheetId, sheetName, folderName || '', dataset, startRow, hasHeader ? 1 : 0]
       );
     } else {
       await pool.query(
-        `INSERT INTO sync_config (table_name, spreadsheet_id, sheet_name, folder_name, dataset_name) 
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO sync_config (table_name, spreadsheet_id, sheet_name, folder_name, dataset_name, start_row, has_header) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (table_name) 
-         DO UPDATE SET spreadsheet_id = $2, sheet_name = $3`,
-        [tableName, spreadsheetId, sheetName, folderName || '', dataset]
+         DO UPDATE SET spreadsheet_id = $2, sheet_name = $3, start_row = $6, has_header = $7`,
+        [tableName, spreadsheetId, sheetName, folderName || '', dataset, startRow, hasHeader]
       );
     }
 
-    // บันทึกใน folder_tables ถ้ามี folderName (ใช้ folder_id แทน folder_name)
+    // บันทึกใน folder_tables ถ้ามี folderName (ใช้ MongoDB)
     if (folderName) {
-      // หา folder_id จาก folder name
-      const folderResult = await pool.query(
-        dbType === 'mysql' 
-          ? 'SELECT id FROM `folders` WHERE name = ?' 
-          : 'SELECT id FROM "folders" WHERE name = $1',
-        [folderName]
-      );
-      
-      if (folderResult.rows.length > 0) {
-        const folderId = folderResult.rows[0].id;
+      try {
+        // หา folder document จากชื่อ
+        const folder = await mongoDb.collection('folders').findOne({ name: folderName });
         
-        if (dbType === 'mysql') {
-          await pool.query(
-            `INSERT INTO folder_tables (folder_id, table_name) 
-             VALUES (?, ?) 
-             ON DUPLICATE KEY UPDATE table_name = VALUES(table_name)`,
-            [folderId, tableName]
-          );
-        } else {
-          await pool.query(
-            `INSERT INTO folder_tables (folder_id, table_name) 
-             VALUES ($1, $2) 
-             ON CONFLICT (folder_id, table_name) DO NOTHING`,
-            [folderId, tableName]
+        if (folder) {
+          // บันทึกลง MongoDB folder_tables (ใช้ ObjectId แทน string)
+          await mongoDb.collection('folder_tables').updateOne(
+            { folder_id: folder._id, table_name: tableName },
+            { 
+              $set: { 
+                folder_id: folder._id, 
+                table_name: tableName,
+                updated_at: new Date()
+              },
+              $setOnInsert: { created_at: new Date() }
+            },
+            { upsert: true }
           );
         }
+      } catch (mongoError) {
+        console.error('Error saving to MongoDB folder_tables:', mongoError);
+        // ไม่ throw error เพื่อให้การสร้างตารางดำเนินต่อไป
       }
     }
 
@@ -110,7 +106,7 @@ export async function PUT(request: NextRequest) {
   
   try {
     const pool = await ensureDbInitialized();
-    const { dataset, tableName } = await request.json();
+    const { dataset, tableName, forceSync = false } = await request.json();
     
     if (!dataset || !tableName) {
       return NextResponse.json({ error: 'Dataset and table name are required' }, { status: 400 });
@@ -136,19 +132,115 @@ export async function PUT(request: NextRequest) {
     const config = configs.rows[0];
     const sheets = await getGoogleSheetsClient();
 
+    // ใช้ค่า start_row และ has_header จาก config (default: 1, true)
+    const configStartRow = config.start_row || 1;
+    const configHasHeader = config.has_header !== undefined ? config.has_header : true;
+    const dataStartRow = configHasHeader ? configStartRow + 1 : configStartRow;
+
+    // 🚀 OPTIMIZATION: ตรวจสอบ checksum ก่อนเพื่อลด API calls
+    if (!forceSync) {
+      try {
+        console.log(`[Checksum] Checking if ${tableName} needs sync...`);
+        
+        // ดึง header range (ถ้ามี) หรือแถวแรกเพื่อเช็ค checksum
+        const headerRange = configHasHeader 
+          ? `${config.sheet_name}!A${configStartRow}:ZZ${configStartRow}`
+          : `${config.sheet_name}!A${dataStartRow}:ZZ${dataStartRow}`;
+        const headerResponse = await sheets.spreadsheets.values.get({
+          spreadsheetId: config.spreadsheet_id,
+          range: headerRange,
+        });
+        
+        // นับจำนวนแถวทั้งหมดโดยดึงคอลัมน์แรกทั้งหมด
+        const allRowsRange = `${config.sheet_name}!A:A`;
+        const countResponse = await sheets.spreadsheets.values.get({
+          spreadsheetId: config.spreadsheet_id,
+          range: allRowsRange,
+        });
+        
+        const totalSheetRows = (countResponse.data.values || []).length;
+        const currentRowCount = configHasHeader 
+          ? Math.max(0, totalSheetRows - configStartRow) // ลบ rows ก่อน startRow และ header
+          : Math.max(0, totalSheetRows - configStartRow + 1); // ลบ rows ก่อน startRow
+        const lastChecksum = config.last_checksum;
+        const lastRowCount = config.last_row_count || 0;
+        
+        // ถ้าจำนวนแถวเท่าเดิม ให้สุ่มตรวจสอบ sample rows
+        if (currentRowCount === lastRowCount && lastChecksum && currentRowCount > 0) {
+          console.log(`[Checksum] Row count unchanged (${currentRowCount}), checking sample data...`);
+          
+          // ดึง sample: แถวแรก, กลาง, สุดท้าย (ใช้ dataStartRow)
+          const firstRowNum = dataStartRow;
+          const middleRowNum = Math.max(dataStartRow, Math.floor((dataStartRow + currentRowCount - 1) / 2));
+          const lastRowNum = dataStartRow + currentRowCount - 1;
+          
+          // ใช้ array แยก ranges แทนการใช้ comma-separated string
+          const sampleRanges = [
+            `${config.sheet_name}!A${firstRowNum}:ZZ${firstRowNum}`,
+            `${config.sheet_name}!A${middleRowNum}:ZZ${middleRowNum}`,
+            `${config.sheet_name}!A${lastRowNum}:ZZ${lastRowNum}`
+          ];
+          
+          const sampleResponse = await sheets.spreadsheets.values.batchGet({
+            spreadsheetId: config.spreadsheet_id,
+            ranges: sampleRanges,
+          });
+          
+          const sampleRows = sampleResponse.data.valueRanges?.flatMap(vr => vr.values || []) || [];
+          const newChecksum = calculateChecksum([headerResponse.data.values?.[0] || [], ...sampleRows]);
+          
+          if (newChecksum === lastChecksum) {
+            console.log(`[Checksum] ✓ No changes detected, skipping sync for ${tableName}`);
+            
+            // อัพเดท log - skipped
+            if (logId) {
+              await pool.query(
+                `UPDATE sync_logs 
+                 SET status = $1, 
+                     completed_at = NOW(), 
+                     sync_duration = 0,
+                     rows_synced = $2
+                 WHERE id = $3`,
+                ['skipped', currentRowCount, logId]
+              );
+            }
+            
+            return NextResponse.json({ 
+              success: true, 
+              skipped: true,
+              message: `No changes detected, sync skipped`,
+              stats: {
+                inserted: 0,
+                updated: 0,
+                deleted: 0,
+                total: currentRowCount
+              }
+            });
+          } else {
+            console.log(`[Checksum] Changes detected (checksum mismatch), proceeding with sync...`);
+          }
+        } else {
+          console.log(`[Checksum] Row count changed (${lastRowCount} → ${currentRowCount}), proceeding with sync...`);
+        }
+      } catch (checksumError: any) {
+        console.error(`[Checksum] Error checking checksum for ${tableName}, proceeding with full sync:`, checksumError.message);
+        // ถ้า checksum error ให้ sync เต็มรูปแบบต่อ
+      }
+    }
+
     // ดึงข้อมูลจาก Google Sheets แบบไม่จำกัดจำนวนแถว
     let allRows: any[] = [];
-    let startRow = 1;
+    let fetchStartRow = configStartRow; // เริ่มจาก startRow ที่กำหนดไว้
     const batchSize = 50000; // ดึงทีละ 50,000 แถว
     let hasMore = true;
 
-    console.log(`Starting sync for ${tableName}...`);
+    console.log(`Starting full sync for ${tableName} from row ${fetchStartRow}...`);
 
     while (hasMore) {
-      const endRow = startRow + batchSize - 1;
-      const range = `${config.sheet_name}!A${startRow}:ZZ${endRow}`;
+      const endRow = fetchStartRow + batchSize - 1;
+      const range = `${config.sheet_name}!A${fetchStartRow}:ZZ${endRow}`;
       
-      console.log(`Fetching rows ${startRow} to ${endRow}...`);
+      console.log(`Fetching rows ${fetchStartRow} to ${endRow}...`);
       
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId: config.spreadsheet_id,
@@ -166,7 +258,7 @@ export async function PUT(request: NextRequest) {
         if (batchRows.length < batchSize) {
           hasMore = false;
         } else {
-          startRow += batchSize;
+          fetchStartRow += batchSize;
         }
       }
 
@@ -177,14 +269,34 @@ export async function PUT(request: NextRequest) {
 
     const rows = allRows;
     
-    if (rows.length <= 1) {
+    if (rows.length === 0) {
       return NextResponse.json({ error: 'No data to sync' }, { status: 404 });
     }
 
     console.log(`Proceeding with sync for ${tableName}...`);
 
-    const headers = rows[0];
-    const dataRows = rows.slice(1);
+    // ตรวจสอบว่ามี header หรือไม่
+    let headers: string[];
+    let dataRows: any[];
+    
+    if (configHasHeader) {
+      headers = rows[0]; // แถวแรกคือ header
+      dataRows = rows.slice(1); // แถวที่เหลือคือ data
+    } else {
+      // ไม่มี header - ใช้ชื่อคอลัมน์จาก schema
+      const schemaResult = await pool.query(
+        `SELECT column_name FROM information_schema.columns 
+         WHERE table_name = $1 AND column_name NOT IN ('id', 'synced_at') 
+         ORDER BY ordinal_position`,
+        [tableName]
+      );
+      headers = schemaResult.rows.map((r: any) => r.column_name);
+      dataRows = rows; // ทุกแถวคือ data
+    }
+
+    if (dataRows.length === 0) {
+      return NextResponse.json({ error: 'No data rows to sync' }, { status: 404 });
+    }
 
     // เตรียมชื่อคอลัมน์
     const columnNames = headers.map((h: string) => 
@@ -276,10 +388,22 @@ export async function PUT(request: NextRequest) {
 
     console.log(`Sync completed: ${insertedCount} inserted, ${updatedCount} updated, ${deletedCount} deleted`);
 
-    // อัพเดท last_sync
+    // คำนวณ checksum ใหม่สำหรับครั้งถัดไป
+    const newChecksum = calculateChecksum([
+      headers,
+      dataRows[0] || [],
+      dataRows[Math.floor(dataRows.length / 2)] || [],
+      dataRows[dataRows.length - 1] || []
+    ]);
+
+    // อัพเดท last_sync พร้อม checksum และ row count
     await pool.query(
-      'UPDATE sync_config SET last_sync = NOW() WHERE table_name = $1',
-      [tableName]
+      `UPDATE sync_config 
+       SET last_sync = NOW(), 
+           last_checksum = $1, 
+           last_row_count = $2 
+       WHERE table_name = $3`,
+      [newChecksum, dataRows.length, tableName]
     );
 
     // อัพเดท log - success

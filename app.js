@@ -20,6 +20,17 @@ const handle = app.getRequestHandler();
 
 // Prepare and start server
 app.prepare().then(() => {
+  // Initialize cron jobs after Next.js is ready
+  if (!dev) {
+    // Only in production
+    const { initializeCronJobs } = require('./lib/cronScheduler');
+    initializeCronJobs().then(() => {
+      console.log('> Cron scheduler initialized');
+    }).catch(err => {
+      console.error('> Failed to initialize cron scheduler:', err);
+    });
+  }
+  
   createServer(async (req, res) => {
     try {
       const parsedUrl = parse(req.url, true);

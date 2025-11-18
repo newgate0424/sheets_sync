@@ -3,8 +3,6 @@
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Database, Table2, ChevronRight, ChevronDown, Search, Play, FileText, MoreVertical, Folder, FolderPlus, Edit2, Trash2, FilePlus, X, RefreshCw, Eye } from 'lucide-react';
-import Header from '@/components/Header';
-import Sidebar from '@/components/Sidebar';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,6 +56,10 @@ function DatabasePageContent() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [syncProgress, setSyncProgress] = useState<{ [key: string]: { status: 'syncing' | 'success' | 'error', message?: string } }>({});
   const [tableSyncLoading, setTableSyncLoading] = useState<{ [key: string]: boolean }>({});
+  const [startRow, setStartRow] = useState(1);
+  const [hasHeader, setHasHeader] = useState(true);
+  const [dbType, setDbType] = useState<'mysql' | 'postgresql'>('postgresql');
+  const [syncConfig, setSyncConfig] = useState<any>(null);
   
   // Save activeTab to localStorage whenever it changes
   const handleTabChange = (tab: 'schema' | 'details' | 'preview') => {
@@ -73,9 +75,69 @@ function DatabasePageContent() {
     setTimeout(() => setToast(null), 4000);
   };
 
+  // ฟังก์ชันดึงประเภท database
+  const fetchDatabaseType = async () => {
+    try {
+      const response = await fetch('/api/database-type');
+      if (response.ok) {
+        const data = await response.json();
+        setDbType(data.type);
+      }
+    } catch (error) {
+      console.error('Error fetching database type:', error);
+    }
+  };
+
+  // ฟังก์ชันดึงข้อมูล sync config
+  const fetchSyncConfig = async (tableName: string) => {
+    try {
+      let syncQuery: string;
+      let syncParams: any[];
+      
+      if (dbType === 'mysql') {
+        syncQuery = `SELECT * FROM \`sync_config\` WHERE \`table_name\` = ? LIMIT 1`;
+        syncParams = [tableName];
+      } else {
+        syncQuery = `SELECT * FROM "sync_config" WHERE "table_name" = $1 LIMIT 1`;
+        syncParams = [tableName];
+      }
+      
+      const response = await fetch('/api/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          query: syncQuery,
+          params: syncParams
+        }),
+      });
+      
+      const data = await response.json();
+      if (data.rows && data.rows.length > 0) {
+        setSyncConfig(data.rows[0]);
+      } else {
+        setSyncConfig(null);
+      }
+    } catch (error) {
+      console.error('Error fetching sync config:', error);
+      setSyncConfig(null);
+    }
+  };
+
   useEffect(() => {
     fetchDatasets();
+    fetchDatabaseType();
+    // รัน auto migration
+    runAutoMigration();
   }, []);
+
+  const runAutoMigration = async () => {
+    try {
+      await fetch('/api/auto-migrate');
+    } catch (error) {
+      console.error('Auto migration failed:', error);
+      // ไม่แสดง error เพราะไม่อยากรบกวนผู้ใช้
+    }
+  };
 
   useEffect(() => {
     // อ่านข้อมูลจาก URL parameters เฉพาะตอนโหลดครั้งแรก
@@ -428,15 +490,13 @@ function DatabasePageContent() {
         fetch('/api/folders', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ folderId: parseInt(showDialog.folder || '0') })
+          body: JSON.stringify({ folderId: showDialog.folder })
         }).then(() => fetchDatasets());
         break;
 
       case 'deleteTable':
-        fetch('/api/folder-tables', {
+        fetch(`/api/folder-tables?tableName=${encodeURIComponent(showDialog.oldName || '')}`, {
           method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dataset: showDialog.dataset, folderName: showDialog.folder, tableName: showDialog.oldName })
         }).then(() => fetchDatasets());
         break;
 
@@ -499,7 +559,9 @@ function DatabasePageContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           spreadsheetId: spreadsheetInfo.spreadsheetId,
-          sheetName: selectedSheet
+          sheetName: selectedSheet,
+          startRow,
+          hasHeader
         }),
       });
       const data = await response.json();
@@ -531,7 +593,9 @@ function DatabasePageContent() {
           tableName: tableName.trim(),
           spreadsheetId: spreadsheetInfo.spreadsheetId,
           sheetName: selectedSheet,
-          schema: sheetSchema.schema
+          schema: sheetSchema.schema,
+          startRow,
+          hasHeader
         }),
       });
       const data = await response.json();
@@ -540,6 +604,13 @@ function DatabasePageContent() {
         // Sync ข้อมูลทันที
         await handleSyncData();
         setShowCreateTableSlide(null);
+        setStartRow(1);
+        setHasHeader(true);
+        setCreateTableStep(1);
+        setSheetUrl('');
+        setSelectedSheet('');
+        setSheetSchema(null);
+        setTableName('');
         fetchDatasets();
       } else {
         showToast(data.error || 'ไม่สามารถสร้างตารางได้', 'error');
@@ -566,7 +637,7 @@ function DatabasePageContent() {
       const data = await response.json();
       
       if (response.ok) {
-        showToast(`ซิงค์ข้อมูลสำเร็จ: ${data.rowCount} แถว`, 'success');
+        showToast(`ซิงค์ข้อมูลสำเร็จ: ${data.stats?.total || 0} แถว`, 'success');
       } else {
         showToast(data.error || 'ไม่สามารถซิงค์ข้อมูลได้', 'error');
       }
@@ -693,17 +764,40 @@ function DatabasePageContent() {
     localStorage.setItem('activeTab', 'preview');
     
     fetchTableSchema(datasetName, tableName);
+    fetchSyncConfig(tableName);
     executeQueryForTable(datasetName, tableName);
   };
 
   const fetchTableSchema = async (datasetName: string, tableName: string) => {
     try {
+      let schemaQuery: string;
+      let schemaParams: any[];
+      
+      if (dbType === 'mysql') {
+        // MySQL ใช้ SHOW COLUMNS ซึ่งจะให้ Field, Type, Null, Key, Default, Extra
+        schemaQuery = `SHOW COLUMNS FROM \`${tableName}\``;
+        schemaParams = [];
+      } else {
+        // PostgreSQL ใช้ information_schema แต่ต้องแปลง format ให้เหมือน SHOW COLUMNS
+        schemaQuery = `
+          SELECT 
+            column_name as "Field",
+            data_type as "Type",
+            is_nullable as "Null",
+            '' as "Key"
+          FROM information_schema.columns 
+          WHERE table_name = $1 
+          ORDER BY ordinal_position
+        `;
+        schemaParams = [tableName];
+      }
+      
       const response = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          query: `SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = $1 ORDER BY ordinal_position`,
-          params: [tableName]
+          query: schemaQuery,
+          params: schemaParams
         }),
       });
       const data = await response.json();
@@ -716,10 +810,17 @@ function DatabasePageContent() {
   const executeQueryForTable = async (datasetName: string, tableName: string, page: number = 1, limit: number = rowsPerPage) => {
     try {
       // นับจำนวนแถวทั้งหมด
+      let countQuery: string;
+      if (dbType === 'mysql') {
+        countQuery = `SELECT COUNT(*) as total FROM \`${tableName}\``;
+      } else {
+        countQuery = `SELECT COUNT(*) as total FROM "${tableName}"`;
+      }
+      
       const countResponse = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: `SELECT COUNT(*) as total FROM "${tableName}"` }),
+        body: JSON.stringify({ query: countQuery }),
       });
       const countData = await countResponse.json();
       const total = countData.rows?.[0]?.total || 0;
@@ -727,10 +828,17 @@ function DatabasePageContent() {
 
       // ดึงข้อมูลตาม pagination
       const offset = (page - 1) * limit;
+      let dataQuery: string;
+      if (dbType === 'mysql') {
+        dataQuery = `SELECT * FROM \`${tableName}\` LIMIT ${limit} OFFSET ${offset}`;
+      } else {
+        dataQuery = `SELECT * FROM "${tableName}" LIMIT ${limit} OFFSET ${offset}`;
+      }
+      
       const response = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: `SELECT * FROM "${tableName}" LIMIT ${limit} OFFSET ${offset}` }),
+        body: JSON.stringify({ query: dataQuery }),
       });
       const data = await response.json();
       setQueryResult(data);
@@ -753,22 +861,39 @@ function DatabasePageContent() {
     }
   };
 
-  const handleSearch = async (searchValue: string) => {
+  const handleSearch = async (searchValue: string, page: number = 1) => {
     setSearchQuery(searchValue);
     
     if (!searchValue || !selectedTable) {
       setFilteredData(null);
+      // กลับไปแสดงข้อมูลปกติ
+      if (selectedTable) {
+        executeQueryForTable(selectedTable.dataset, selectedTable.table, page, rowsPerPage);
+      }
       return;
     }
 
     try {
-      // ดึงชื่อคอลัมน์จากตารางโดยใช้ information_schema
+      // ดึงชื่อคอลัมน์จากตารางโดยใช้ query ที่เหมาะสมกับแต่ละ database
+      let columnsQuery: string;
+      let columnsParams: any[];
+      
+      if (dbType === 'mysql') {
+        // MySQL ใช้ SHOW COLUMNS
+        columnsQuery = `SHOW COLUMNS FROM \`${selectedTable.table}\``;
+        columnsParams = [];
+      } else {
+        // PostgreSQL ใช้ information_schema
+        columnsQuery = `SELECT column_name as "Field" FROM information_schema.columns WHERE table_name = $1 ORDER BY ordinal_position`;
+        columnsParams = [selectedTable.table];
+      }
+      
       const columnsResponse = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          query: `SELECT column_name as "Field" FROM information_schema.columns WHERE table_name = $1 ORDER BY ordinal_position`,
-          params: [selectedTable.table]
+          query: columnsQuery,
+          params: columnsParams
         }),
       });
       
@@ -782,19 +907,64 @@ function DatabasePageContent() {
       // ดึงชื่อคอลัมน์จาก Field
       const columns = columnsData.rows.map((row: any) => row.Field);
       
-      // สร้าง SQL query สำหรับค้นหาในทุกคอลัมน์ แบบใช้ parameterized query
-      const whereConditions = columns.map((col: string) => 
-        `CAST("${col}" AS TEXT) ILIKE $1`
-      ).join(' OR ');
+      // สร้าง WHERE condition สำหรับค้นหา
+      let whereConditions: string;
+      let searchParams: any[];
       
-      const searchQuery = `SELECT * FROM "${selectedTable.table}" WHERE ${whereConditions} LIMIT 1000`;
+      if (dbType === 'mysql') {
+        // MySQL ใช้ LIKE และ backticks
+        whereConditions = columns.map((col: string) => 
+          `CAST(\`${col}\` AS CHAR) LIKE ?`
+        ).join(' OR ');
+        searchParams = Array(columns.length).fill(`%${searchValue}%`);
+      } else {
+        // PostgreSQL ใช้ ILIKE และ double quotes
+        whereConditions = columns.map((col: string) => 
+          `CAST("${col}" AS TEXT) ILIKE $1`
+        ).join(' OR ');
+        searchParams = [`%${searchValue}%`];
+      }
+      
+      // นับจำนวนแถวที่ค้นพบทั้งหมด
+      let countQuery: string;
+      if (dbType === 'mysql') {
+        countQuery = `SELECT COUNT(*) as total FROM \`${selectedTable.table}\` WHERE ${whereConditions}`;
+      } else {
+        countQuery = `SELECT COUNT(*) as total FROM "${selectedTable.table}" WHERE ${whereConditions}`;
+      }
+      
+      const countResponse = await fetch('/api/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          query: countQuery,
+          params: searchParams
+        }),
+      });
+      
+      const countData = await countResponse.json();
+      const total = countData.rows?.[0]?.total || 0;
+      setTotalRows(total);
+      
+      // ดึงข้อมูลตาม pagination
+      const offset = (page - 1) * rowsPerPage;
+      let dataQuery: string;
+      let dataParams: any[];
+      
+      if (dbType === 'mysql') {
+        dataQuery = `SELECT * FROM \`${selectedTable.table}\` WHERE ${whereConditions} LIMIT ? OFFSET ?`;
+        dataParams = [...searchParams, rowsPerPage, offset];
+      } else {
+        dataQuery = `SELECT * FROM "${selectedTable.table}" WHERE ${whereConditions} LIMIT $${searchParams.length + 1} OFFSET $${searchParams.length + 2}`;
+        dataParams = [...searchParams, rowsPerPage, offset];
+      }
       
       const response = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          query: searchQuery,
-          params: [`%${searchValue}%`]
+          query: dataQuery,
+          params: dataParams
         }),
       });
       
@@ -806,10 +976,9 @@ function DatabasePageContent() {
       }
       
       setFilteredData(data);
+      setCurrentPage(page);
       
-      // รีเซ็ต pagination เมื่อค้นหา
-      setCurrentPage(1);
-      setTotalRows(data.rows?.length || 0);
+      showToast(`พบ ${total} แถว`, 'info');
     } catch (error: any) {
       console.error('Error searching:', error);
       showToast('เกิดข้อผิดพลาดในการค้นหา: ' + (error.message || 'Unknown error'), 'error');
@@ -1014,7 +1183,7 @@ function DatabasePageContent() {
                                               });
                                               const data = await response.json();
                                               if (response.ok) {
-                                                showToast(`ซิงค์ข้อมูลสำเร็จ: ${data.rowCount} แถว`, 'success');
+                                                showToast(`ซิงค์ข้อมูลสำเร็จ: ${data.stats?.total || 0} แถว`, 'success');
                                                 await fetchDatasets();
                                               } else {
                                                 showToast(data.error || 'ไม่สามารถซิงค์ข้อมูลได้', 'error');
@@ -1290,7 +1459,7 @@ function DatabasePageContent() {
                       });
                       const data = await response.json();
                       if (response.ok) {
-                        showToast(`ซิงค์ข้อมูลสำเร็จ: ${data.stats ? `${data.stats.inserted} inserted, ${data.stats.updated} updated, ${data.stats.deleted} deleted` : data.rowCount + ' แถว'}`, 'success');
+                        showToast(`ซิงค์ข้อมูลสำเร็จ: ${data.stats ? `${data.stats.total} แถว (${data.stats.inserted} inserted, ${data.stats.updated} updated, ${data.stats.deleted} deleted)` : '0 แถว'}`, 'success');
                         executeQueryForTable(selectedTable.dataset, selectedTable.table);
                         fetchDatasets();
                       } else {
@@ -1349,6 +1518,10 @@ function DatabasePageContent() {
                       onClick={() => {
                         setSearchQuery('');
                         setFilteredData(null);
+                        if (selectedTable) {
+                          setCurrentPage(1);
+                          executeQueryForTable(selectedTable.dataset, selectedTable.table, 1, rowsPerPage);
+                        }
                       }}
                       className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
                     >
@@ -1452,43 +1625,76 @@ function DatabasePageContent() {
                           <span className="font-medium">{selectedTable.table}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-gray-600">Rows:</span>
+                          <span className="text-gray-600">Total Rows:</span>
+                          <span className="font-medium">{totalRows.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">Loaded Rows:</span>
                           <span className="font-medium">{queryResult?.rows?.length || 0}</span>
                         </div>
                       </div>
                     </div>
 
                     {/* Sync Statistics */}
-                    <div>
-                      <h4 className="text-sm font-semibold text-gray-700 mb-2">Sync Statistics</h4>
-                      <div className="bg-gray-50 rounded p-3 space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Last Sync:</span>
-                          <span className="font-medium text-green-600">
-                            {queryResult?.syncInfo?.last_sync 
-                              ? new Date(queryResult.syncInfo.last_sync).toLocaleString('th-TH')
-                              : '-'}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Skip Count:</span>
-                          <span className="font-medium text-blue-600">
-                            {queryResult?.syncInfo?.skip_count || 0} times
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Checksum:</span>
-                          <span className="font-mono text-xs text-gray-500">
-                            {queryResult?.syncInfo?.last_checksum?.substring(0, 16) || '-'}...
-                          </span>
-                        </div>
-                        {queryResult?.syncInfo?.skip_count > 0 && (
-                          <div className="mt-2 p-2 bg-blue-50 rounded text-xs text-blue-700">
-                            💡 Data unchanged for last {queryResult.syncInfo.skip_count} sync{queryResult.syncInfo.skip_count > 1 ? 's' : ''} - skipped to save API quota
+                    {syncConfig ? (
+                      <div>
+                        <h4 className="text-sm font-semibold text-gray-700 mb-2">Sync Configuration</h4>
+                        <div className="bg-gray-50 rounded p-3 space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Spreadsheet ID:</span>
+                            <span className="font-mono text-xs text-gray-500 truncate max-w-xs">
+                              {syncConfig.spreadsheet_id}
+                            </span>
                           </div>
-                        )}
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Sheet Name:</span>
+                            <span className="font-medium">{syncConfig.sheet_name}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Start Row:</span>
+                            <span className="font-medium">{syncConfig.start_row || 1}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Has Header:</span>
+                            <span className="font-medium">
+                              {syncConfig.has_header ? '✓ Yes' : '✗ No'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Last Sync:</span>
+                            <span className="font-medium text-green-600">
+                              {syncConfig.last_sync 
+                                ? new Date(syncConfig.last_sync).toLocaleString('th-TH')
+                                : '-'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Skip Count:</span>
+                            <span className="font-medium text-blue-600">
+                              {syncConfig.skip_count || 0} times
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Checksum:</span>
+                            <span className="font-mono text-xs text-gray-500">
+                              {syncConfig.last_checksum?.substring(0, 16) || '-'}...
+                            </span>
+                          </div>
+                          {syncConfig.skip_count > 0 && (
+                            <div className="mt-2 p-2 bg-blue-50 rounded text-xs text-blue-700">
+                              💡 Data unchanged for last {syncConfig.skip_count} sync{syncConfig.skip_count > 1 ? 's' : ''} - skipped to save API quota
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div>
+                        <h4 className="text-sm font-semibold text-gray-700 mb-2">Sync Configuration</h4>
+                        <div className="bg-gray-50 rounded p-3 text-sm text-gray-500 text-center">
+                          ไม่พบข้อมูล Sync Configuration
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1573,8 +1779,7 @@ function DatabasePageContent() {
                     </table>
                       </div>
                     
-                    {/* Pagination Controls - Footer (ซ่อนเมื่อแสดงผลค้นหา) */}
-                    {!filteredData && (
+                    {/* Pagination Controls - Footer */}
                     <div className="bg-white border-t border-gray-300 px-4 py-3 flex items-center justify-between flex-shrink-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm text-gray-700">Results per page:</span>
@@ -1585,7 +1790,11 @@ function DatabasePageContent() {
                             setRowsPerPage(newLimit);
                             setCurrentPage(1);
                             if (selectedTable) {
-                              executeQueryForTable(selectedTable.dataset, selectedTable.table, 1, newLimit);
+                              if (searchQuery) {
+                                handleSearch(searchQuery, 1);
+                              } else {
+                                executeQueryForTable(selectedTable.dataset, selectedTable.table, 1, newLimit);
+                              }
                             }
                           }}
                           className="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -1610,7 +1819,11 @@ function DatabasePageContent() {
                             onClick={() => {
                               setCurrentPage(1);
                               if (selectedTable) {
-                                executeQueryForTable(selectedTable.dataset, selectedTable.table, 1, rowsPerPage);
+                                if (searchQuery) {
+                                  handleSearch(searchQuery, 1);
+                                } else {
+                                  executeQueryForTable(selectedTable.dataset, selectedTable.table, 1, rowsPerPage);
+                                }
                               }
                             }}
                             disabled={currentPage === 1}
@@ -1627,7 +1840,11 @@ function DatabasePageContent() {
                                 const newPage = currentPage - 1;
                                 setCurrentPage(newPage);
                                 if (selectedTable) {
-                                  executeQueryForTable(selectedTable.dataset, selectedTable.table, newPage, rowsPerPage);
+                                  if (searchQuery) {
+                                    handleSearch(searchQuery, newPage);
+                                  } else {
+                                    executeQueryForTable(selectedTable.dataset, selectedTable.table, newPage, rowsPerPage);
+                                  }
                                 }
                               }
                             }}
@@ -1645,7 +1862,11 @@ function DatabasePageContent() {
                                 const newPage = currentPage + 1;
                                 setCurrentPage(newPage);
                                 if (selectedTable) {
-                                  executeQueryForTable(selectedTable.dataset, selectedTable.table, newPage, rowsPerPage);
+                                  if (searchQuery) {
+                                    handleSearch(searchQuery, newPage);
+                                  } else {
+                                    executeQueryForTable(selectedTable.dataset, selectedTable.table, newPage, rowsPerPage);
+                                  }
                                 }
                               }
                             }}
@@ -1662,7 +1883,11 @@ function DatabasePageContent() {
                               const lastPage = Math.ceil(totalRows / rowsPerPage);
                               setCurrentPage(lastPage);
                               if (selectedTable) {
-                                executeQueryForTable(selectedTable.dataset, selectedTable.table, lastPage, rowsPerPage);
+                                if (searchQuery) {
+                                  handleSearch(searchQuery, lastPage);
+                                } else {
+                                  executeQueryForTable(selectedTable.dataset, selectedTable.table, lastPage, rowsPerPage);
+                                }
                               }
                             }}
                             disabled={currentPage >= Math.ceil(totalRows / rowsPerPage)}
@@ -1674,7 +1899,6 @@ function DatabasePageContent() {
                         </div>
                       </div>
                     </div>
-                    )}
                     </>
                   ) : (
                     <div className="flex items-center justify-center h-full text-gray-500">
@@ -1848,7 +2072,7 @@ function DatabasePageContent() {
               {/* Step 2: Select Sheet */}
               {createTableStep === 2 && spreadsheetInfo && (
                 <div className="space-y-4">
-                  <h3 className="text-lg font-semibold text-gray-800">เลือก Sheet</h3>
+                  <h3 className="text-lg font-semibold text-gray-800">เลือก Sheet และกำหนดการอ่านข้อมูล</h3>
                   <p className="text-sm text-gray-600">Spreadsheet: {spreadsheetInfo.title}</p>
                   
                   <div className="space-y-2">
@@ -1866,6 +2090,37 @@ function DatabasePageContent() {
                       ))}
                     </select>
                   </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-700">แถวเริ่มต้นที่จะอ่านข้อมูล</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={startRow}
+                      onChange={(e) => setStartRow(Math.max(1, parseInt(e.target.value) || 1))}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <p className="text-xs text-gray-500">ระบุแถวที่เริ่มต้นอ่านข้อมูล (เริ่มจาก 1)</p>
+                  </div>
+
+                  <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <input
+                      type="checkbox"
+                      id="hasHeader"
+                      checked={hasHeader}
+                      onChange={(e) => setHasHeader(e.target.checked)}
+                      className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                    />
+                    <label htmlFor="hasHeader" className="text-sm font-medium text-gray-700 cursor-pointer">
+                      แถวแรกเป็นหัวข้อ (Header)
+                    </label>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    {hasHeader 
+                      ? `จะใช้แถวที่ ${startRow} เป็นชื่อคอลัมน์ และเริ่มอ่านข้อมูลจากแถวที่ ${startRow + 1}`
+                      : `จะเริ่มอ่านข้อมูลทันทีจากแถวที่ ${startRow} และสร้างชื่อคอลัมน์อัตโนมัติ (column_1, column_2, ...)`
+                    }
+                  </p>
 
                   <div className="flex gap-3">
                     <button
@@ -1905,13 +2160,28 @@ function DatabasePageContent() {
                       <thead className="bg-gray-50">
                         <tr>
                           <th className="px-4 py-2 text-left font-semibold text-gray-700">Column Name</th>
+                          <th className="px-4 py-2 text-left font-semibold text-gray-700">Original Name</th>
                           <th className="px-4 py-2 text-left font-semibold text-gray-700">Data Type</th>
+                          <th className="px-4 py-2 text-center font-semibold text-gray-700">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
                         {sheetSchema.schema.map((col: any, index: number) => (
                           <tr key={index} className="border-t border-gray-200">
-                            <td className="px-4 py-2 text-gray-700">{col.name}</td>
+                            <td className="px-4 py-2">
+                              <input
+                                type="text"
+                                value={col.name}
+                                onChange={(e) => {
+                                  const newSchema = [...sheetSchema.schema];
+                                  newSchema[index].name = e.target.value.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+                                  setSheetSchema({ ...sheetSchema, schema: newSchema });
+                                }}
+                                className="w-full px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="column_name"
+                              />
+                            </td>
+                            <td className="px-4 py-2 text-gray-600 text-xs">{col.originalName}</td>
                             <td className="px-4 py-2">
                               <select
                                 value={col.type}
@@ -1920,7 +2190,7 @@ function DatabasePageContent() {
                                   newSchema[index].type = e.target.value;
                                   setSheetSchema({ ...sheetSchema, schema: newSchema });
                                 }}
-                                className="px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                               >
                                 <option value="INT">INT</option>
                                 <option value="DECIMAL(10,2)">DECIMAL</option>
@@ -1929,6 +2199,27 @@ function DatabasePageContent() {
                                 <option value="DATETIME">DATETIME</option>
                                 <option value="DATE">DATE</option>
                               </select>
+                            </td>
+                            <td className="px-4 py-2 text-center">
+                              <button
+                                onClick={() => {
+                                  const newSchema = sheetSchema.schema.filter((_: any, i: number) => i !== index);
+                                  const newHeaders = sheetSchema.headers.filter((_: any, i: number) => i !== index);
+                                  const newPreviewData = sheetSchema.previewData.map((row: any[]) => 
+                                    row.filter((_: any, i: number) => i !== index)
+                                  );
+                                  setSheetSchema({ 
+                                    ...sheetSchema, 
+                                    schema: newSchema,
+                                    headers: newHeaders,
+                                    previewData: newPreviewData
+                                  });
+                                }}
+                                className="px-3 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600 transition-colors"
+                                title="ลบคอลัมน์"
+                              >
+                                ลบ
+                              </button>
                             </td>
                           </tr>
                         ))}
@@ -1946,9 +2237,12 @@ function DatabasePageContent() {
                       <table className="w-full text-xs">
                         <thead className="bg-gray-50">
                           <tr>
-                            {sheetSchema.headers.map((header: string, index: number) => (
+                            {sheetSchema.schema.map((col: any, index: number) => (
                               <th key={index} className="px-3 py-2 text-left font-semibold text-gray-700 border-b">
-                                {header}
+                                {col.name}
+                                {col.name !== col.originalName && (
+                                  <span className="ml-1 text-gray-400 font-normal">({col.originalName})</span>
+                                )}
                               </th>
                             ))}
                           </tr>
@@ -2029,52 +2323,9 @@ function DatabasePageContent() {
 }
 
 export default function DatabasePage() {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [isDesktop, setIsDesktop] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-    const checkDesktop = () => {
-      setIsDesktop(window.innerWidth >= 1024);
-    };
-    
-    checkDesktop();
-    
-    // อ่านค่า sidebar state จาก localStorage
-    const savedState = localStorage.getItem('sidebarOpen');
-    if (savedState !== null) {
-      setSidebarOpen(savedState === 'true');
-    } else {
-      setSidebarOpen(window.innerWidth >= 1024);
-    }
-    
-    window.addEventListener('resize', checkDesktop);
-    return () => window.removeEventListener('resize', checkDesktop);
-  }, []);
-  
-  const handleSidebarToggle = () => {
-    const newState = !sidebarOpen;
-    setSidebarOpen(newState);
-    localStorage.setItem('sidebarOpen', String(newState));
-  };
-
-  if (!mounted) {
-    return null;
-  }
-
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} collapsed={!sidebarOpen && isDesktop} />
-      <Header onMenuClick={handleSidebarToggle} sidebarOpen={sidebarOpen} />
-      
-      <main className={`transition-all duration-300 pt-16 ${sidebarOpen && isDesktop ? 'lg:ml-64' : 'lg:ml-20'}`}>
-        <div className="p-4 md:p-6 lg:p-8">
-          <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div></div>}>
-            <DatabasePageContent />
-          </Suspense>
-        </div>
-      </main>
-    </div>
+    <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div></div>}>
+      <DatabasePageContent />
+    </Suspense>
   );
 }

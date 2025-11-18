@@ -10,12 +10,15 @@
     "migrate": "node scripts/migrate.js"
   },
   "dependencies": {
+    "@types/node-cron": "^3.0.11",
     "bcrypt": "^6.0.0",
+    "cron-time-generator": "^2.0.3",
     "googleapis": "^166.0.0",
     "lucide-react": "^0.292.0",
     "mongodb": "^7.0.0",
     "mysql2": "^3.15.3",
     "next": "^14.2.0",
+    "node-cron": "^4.2.1",
     "pg": "^8.16.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

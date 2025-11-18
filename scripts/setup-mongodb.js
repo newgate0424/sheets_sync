@@ -1,4 +1,4 @@
-// สคริปต์สำหรับตั้งค่า MongoDB indexes และสร้าง admin user เริ่มต้น
+// สคริปต์สำหรับตั้งค่า MongoDB indexes และสร้าง sample data
 const { MongoClient } = require('mongodb');
 const bcrypt = require('bcrypt');
 const fs = require('fs');
@@ -34,60 +34,56 @@ function loadEnv() {
 async function setupMongoDB() {
   const env = loadEnv();
   
-  if (!env.DATABASE_USER_URL) {
-    console.error('❌ DATABASE_USER_URL not found in .env file');
+  const MONGODB_URI = env.MONGODB_URI || env.DATABASE_USER_URL;
+  
+  if (!MONGODB_URI) {
+    console.error('❌ MONGODB_URI not found in .env file');
     process.exit(1);
   }
   
   console.log('Connecting to MongoDB...');
-  const client = new MongoClient(env.DATABASE_USER_URL);
+  const client = new MongoClient(MONGODB_URI);
   
   try {
     await client.connect();
-    console.log('Connected to MongoDB');
+    console.log('✓ Connected to MongoDB');
     
-    // แยก database name จาก connection string
-    const url = new URL(env.DATABASE_USER_URL);
-    const dbName = url.pathname.substring(1).split('?')[0] || 'user';
+    const db = client.db('sheets_sync');
     
-    const db = client.db(dbName);
-    const usersCollection = db.collection('users');
+    // สร้าง sample folders
+    const foldersCollection = db.collection('folders');
+    const folderTablesCollection = db.collection('folder_tables');
     
-    // สร้าง unique index สำหรับ username
-    await usersCollection.createIndex({ username: 1 }, { unique: true });
-    console.log('✓ Created unique index on username');
+    // ลบข้อมูลเก่า
+    await foldersCollection.deleteMany({});
+    await folderTablesCollection.deleteMany({});
+    console.log('✓ Cleared old folders data');
     
-    // สร้าง index สำหรับ is_active
-    await usersCollection.createIndex({ is_active: 1 });
-    console.log('✓ Created index on is_active');
+    // สร้าง folders ตัวอย่าง
+    const result = await foldersCollection.insertMany([
+      { name: 'Sales', description: 'Sales data', created_at: new Date() },
+      { name: 'Marketing', description: 'Marketing campaigns', created_at: new Date() },
+      { name: 'Reports', description: 'Monthly reports', created_at: new Date() }
+    ]);
     
-    // ตรวจสอบว่ามี admin user หรือยัง
-    const adminCount = await usersCollection.countDocuments({ role: 'admin' });
+    console.log(`✓ Created ${result.insertedCount} folders`);
     
-    if (adminCount === 0) {
-      console.log('\nNo admin user found. Creating default admin...');
-      
-      const hashedPassword = await bcrypt.hash('admin123', 10);
-      
-      await usersCollection.insertOne({
-        username: 'admin',
-        password: hashedPassword,
-        full_name: 'Administrator',
-        role: 'admin',
-        is_active: true,
-        created_at: new Date(),
-        last_login: null
-      });
-      
-      console.log('✓ Created admin user:');
-      console.log('  Username: admin');
-      console.log('  Password: admin123');
-      console.log('  ⚠️  Please change the password after first login!');
-    } else {
-      console.log(`\n✓ Found ${adminCount} admin user(s)`);
-    }
+    // สร้าง sample folder_tables
+    const folderIds = Object.values(result.insertedIds);
+    await folderTablesCollection.insertMany([
+      { folder_id: folderIds[0].toString(), table_name: 'daily_sales', created_at: new Date() },
+      { folder_id: folderIds[1].toString(), table_name: 'campaigns', created_at: new Date() },
+      { folder_id: folderIds[2].toString(), table_name: 'monthly_report', created_at: new Date() }
+    ]);
     
-    console.log('\nMongoDB setup completed successfully!');
+    console.log('✓ Created sample folder_tables');
+    
+    // แสดงรายการ folders
+    const folders = await foldersCollection.find({}).toArray();
+    console.log('\n📁 Folders:');
+    folders.forEach(f => console.log(`   - ${f.name}: ${f.description}`));
+    
+    console.log('\n✓ MongoDB setup completed successfully!');
   } catch (error) {
     console.error('Error setting up MongoDB:', error);
     process.exit(1);

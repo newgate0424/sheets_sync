@@ -38,7 +38,7 @@ export function middleware(request: NextRequest) {
   }
 
   // หน้าที่ต้อง login
-  const protectedPaths = ['/database', '/log', '/users', '/settings'];
+  const protectedPaths = ['/', '/dashboard', '/database', '/log', '/users', '/settings', '/cron'];
   const isProtectedPath = protectedPaths.some(path => pathname.startsWith(path));
 
   if (isProtectedPath && !isAuthenticated) {
@@ -55,21 +55,15 @@ export function middleware(request: NextRequest) {
     }
   }
 
-  // หน้าแรก redirect ไป login หรือ database
-  if (pathname === '/') {
-    if (isAuthenticated) {
-      return NextResponse.redirect(new URL('/database', request.url));
-    }
-    return NextResponse.redirect(new URL('/login', request.url));
-  }
-
   return NextResponse.next();
 }
 
 export const config = {
   matcher: [
     '/',
+    '/dashboard/:path*',
     '/database/:path*',
+    '/cron/:path*',
     '/log/:path*',
     '/users/:path*',
     '/settings/:path*',

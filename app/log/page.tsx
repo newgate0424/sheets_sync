@@ -3,9 +3,6 @@
 import { useState, useEffect } from 'react';
 import { FileText, Search, RefreshCw, CheckCircle, XCircle, Clock, AlertCircle } from 'lucide-react';
 
-import Header from '@/components/Header';
-import Sidebar from '@/components/Sidebar';
-
 interface SyncLog {
   id: number;
   status: 'running' | 'success' | 'error' | 'skipped' | 'failed';
@@ -215,50 +212,5 @@ function LogPageContent() {
 }
 
 export default function LogPage() {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [isDesktop, setIsDesktop] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-    const checkDesktop = () => {
-      setIsDesktop(window.innerWidth >= 1024);
-    };
-    
-    checkDesktop();
-    
-    // อ่านค่า sidebar state จาก localStorage
-    const savedState = localStorage.getItem('sidebarOpen');
-    if (savedState !== null) {
-      setSidebarOpen(savedState === 'true');
-    } else {
-      setSidebarOpen(window.innerWidth >= 1024);
-    }
-    
-    window.addEventListener('resize', checkDesktop);
-    return () => window.removeEventListener('resize', checkDesktop);
-  }, []);
-  
-  const handleSidebarToggle = () => {
-    const newState = !sidebarOpen;
-    setSidebarOpen(newState);
-    localStorage.setItem('sidebarOpen', String(newState));
-  };
-
-  if (!mounted) {
-    return null;
-  }
-
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} collapsed={!sidebarOpen && isDesktop} />
-      <Header onMenuClick={handleSidebarToggle} sidebarOpen={sidebarOpen} />
-      
-      <main className={`transition-all duration-300 ${sidebarOpen && isDesktop ? 'ml-64' : 'ml-16'} pt-16`}>
-        <div className="p-4 md:p-6 lg:p-8">
-          <LogPageContent />
-        </div>
-      </main>
-    </div>
-  );
+  return <LogPageContent />;
 }

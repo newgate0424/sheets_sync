@@ -4,7 +4,7 @@ import { getGoogleSheetsClient } from '@/lib/googleSheets';
 // POST - ดึงข้อมูลจาก sheet เพื่อดู schema
 export async function POST(request: NextRequest) {
   try {
-    const { spreadsheetId, sheetName } = await request.json();
+    const { spreadsheetId, sheetName, startRow = 1, hasHeader = true } = await request.json();
     
     if (!spreadsheetId || !sheetName) {
       return NextResponse.json({ error: 'Spreadsheet ID and sheet name are required' }, { status: 400 });
@@ -12,10 +12,15 @@ export async function POST(request: NextRequest) {
 
     const sheets = await getGoogleSheetsClient();
     
+    // คำนวณ range ตามการตั้งค่า
+    const dataStartRow = hasHeader ? startRow + 1 : startRow;
+    const headerRow = hasHeader ? startRow : null;
+    
     // ดึงข้อมูลจาก sheet
+    const endRow = dataStartRow + 1000; // ดึง 1000 แถวหลัง header
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!A1:ZZ1000`, // ดึง 1000 แถวแรก
+      range: `${sheetName}!A${startRow}:ZZ${endRow}`,
     });
 
     const rows = response.data.values || [];
@@ -24,9 +29,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No data found in sheet' }, { status: 404 });
     }
 
-    // แถวแรกเป็น header
-    const headers = rows[0];
-    const dataRows = rows.slice(1);
+    let headers: string[];
+    let dataRows: any[][];
+    
+    if (hasHeader) {
+      // แถวแรกเป็น header
+      headers = rows[0];
+      dataRows = rows.slice(1);
+    } else {
+      // สร้าง header อัตโนมัติ
+      const numColumns = rows[0]?.length || 10;
+      headers = Array.from({ length: numColumns }, (_, i) => `column_${i + 1}`);
+      dataRows = rows;
+    }
 
     // สร้าง schema โดยวิเคราะห์ชนิดข้อมูล
     const schema = headers.map((header: string, index: number) => {
@@ -62,7 +77,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       headers,
       schema,
-      previewData: dataRows.slice(0, 5) // ส่งข้อมูล preview 5 แถวแรก
+      previewData: dataRows.slice(0, 5), // ส่งข้อมูล preview 5 แถวแรก
+      startRow,
+      hasHeader
     });
   } catch (error: any) {
     console.error('Google Sheets error:', error);
