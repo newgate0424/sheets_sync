@@ -39,10 +39,11 @@ export async function POST(request: NextRequest) {
     );
     
     try {
-      // เรียก sync API ผ่าน internal localhost
-      const port = process.env.PORT || '3000';
-      const apiUrl = `http://127.0.0.1:${port}/api/sync-table`;
-      console.log(`[Run Job] Calling internal API: ${apiUrl} for table: ${job.table}`);
+      // เรียก sync API - บน Plesk ต้องใช้ full URL
+      const baseUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+      const apiUrl = `${baseUrl}/api/sync-table`;
+      console.log(`[Run Job] Calling API: ${apiUrl} for table: ${job.table}`);
+      console.log(`[Run Job] Using BASE_URL: ${baseUrl}`);
       
       const syncResponse = await fetch(apiUrl, {
         method: 'PUT',
