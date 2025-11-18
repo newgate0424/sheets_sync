@@ -1,29 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getMongoDb } from '@/lib/mongoDb';
 
-// POST - เคลียร์ jobs ที่ค้าง running
+// POST - เคลียร์ jobs ที่ค้าง running (มากกว่า 15 นาที)
 export async function POST() {
   try {
     const db = await getMongoDb();
     
-    // หา jobs ทั้งหมดที่ status = running
+    // หา jobs ที่ running นานเกิน 15 นาที
+    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+    
     const stuckJobs = await db.collection('cron_jobs')
-      .find({ status: 'running' })
+      .find({ 
+        status: 'running',
+        updated_at: { $lt: fifteenMinutesAgo }
+      })
       .toArray();
     
-    if (stuckJobs.length === 0) {
+    // ถ้าไม่มี updated_at ให้ดูจาก created_at
+    const stuckJobsNoUpdate = await db.collection('cron_jobs')
+      .find({ 
+        status: 'running',
+        updated_at: { $exists: false },
+        created_at: { $lt: fifteenMinutesAgo }
+      })
+      .toArray();
+    
+    const allStuckJobs = [...stuckJobs, ...stuckJobsNoUpdate];
+    
+    if (allStuckJobs.length === 0) {
       return NextResponse.json({ 
         message: 'No stuck jobs found',
         count: 0
       });
     }
     
-    // Reset status เป็น failed
+    // Reset status เป็น null (idle)
+    const jobIds = allStuckJobs.map(j => j._id);
     const result = await db.collection('cron_jobs').updateMany(
-      { status: 'running' },
+      { _id: { $in: jobIds } },
       { 
         $set: { 
-          status: 'failed',
+          status: null,
           updated_at: new Date()
         }
       }
@@ -35,7 +52,7 @@ export async function POST() {
       success: true,
       message: `Cleared ${result.modifiedCount} stuck jobs`,
       count: result.modifiedCount,
-      jobs: stuckJobs.map(j => j.name)
+      jobs: allStuckJobs.map(j => ({ name: j.name, id: j._id }))
     });
   } catch (error: any) {
     console.error('Error clearing stuck jobs:', error);

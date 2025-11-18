@@ -38,12 +38,15 @@ export function isSchedulerRunning(): boolean {
   return globalForCron.cronScheduler!.schedulerInitialized;
 }
 
-// ฟังก์ชันเรียก sync API (รับประกันว่า unlock เสมอ)
+// ฟังก์ชันเรียก sync API (รับประกันว่า unlock เสมอ) พร้อม timeout
 async function executeSyncJob(job: CronJob) {
   const db = await getMongoDb();
   const jobId = job._id.toString();
   const startTime = new Date();
   let logId: any = null;
+  
+  // Timeout 10 นาที
+  const TIMEOUT_MS = 10 * 60 * 1000;
   
   try {
     console.log(`[Cron] 🚀 Starting job: ${job.name} (${job.table})`);
@@ -62,13 +65,16 @@ async function executeSyncJob(job: CronJob) {
     });
     logId = logResult.insertedId;
     
-    // ไม่ต้อง update status เป็น running เพราะทำไปแล้วตอน atomic lock
-    
-    // เรียก sync API
+    // เรียก sync API พร้อม timeout
     const apiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/sync-table`;
     console.log(`[Cron] Calling API: ${apiUrl}`);
     
-    const response = await fetch(apiUrl, {
+    // สร้าง timeout promise
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Job timeout after 10 minutes')), TIMEOUT_MS)
+    );
+    
+    const fetchPromise = fetch(apiUrl, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -76,6 +82,9 @@ async function executeSyncJob(job: CronJob) {
         tableName: job.table
       })
     });
+    
+    // Race between fetch and timeout
+    const response = await Promise.race([fetchPromise, timeoutPromise]) as Response;
     
     const data = await response.json();
     console.log(`[Cron] API response for ${job.name}:`, data);
@@ -154,14 +163,14 @@ async function executeSyncJob(job: CronJob) {
       const now = new Date();
       const currentStatus = await db.collection('cron_jobs').findOne({ _id: job._id });
       
-      // ถ้า status ยังเป็น running (ไม่ได้ update เป็น success/failed) ให้ set เป็น failed
+      // ถ้า status ยังเป็น running (ไม่ได้ update เป็น success/failed) ให้ set เป็น null (idle)
       if (currentStatus?.status === 'running') {
         console.log(`[Cron] ⚠️ Unlocking stuck job: ${job.name}`);
         await db.collection('cron_jobs').updateOne(
           { _id: job._id },
           { 
             $set: { 
-              status: 'failed',
+              status: null,
               updated_at: now,
               nextRun: getNextRunTime(job)
             }
@@ -177,7 +186,7 @@ async function executeSyncJob(job: CronJob) {
                 status: 'failed',
                 completed_at: now,
                 duration_ms: now.getTime() - startTime.getTime(),
-                error: 'Job execution interrupted',
+                error: 'Job execution interrupted or timed out',
                 message: 'Job execution interrupted or timed out',
                 updated_at: now
               }
@@ -185,6 +194,9 @@ async function executeSyncJob(job: CronJob) {
           );
         }
       }
+      
+      // Remove from runningJobs set
+      runningJobs.delete(jobId);
     } catch (unlockError) {
       console.error(`[Cron] Error unlocking job ${job.name}:`, unlockError);
     }

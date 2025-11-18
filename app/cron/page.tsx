@@ -60,6 +60,9 @@ export default function CronPage() {
     // โหลดข้อมูลเริ่มต้น
     const initializeData = async () => {
       try {
+        // Auto-clear stuck jobs ก่อน
+        await fetch('/api/cron-jobs/auto-clear');
+        
         await loadCronJobs();
         await loadFolders();
         await loadDatasets();
@@ -71,9 +74,11 @@ export default function CronPage() {
     
     initializeData();
     
-    // Auto-refresh logs ทุก 30 วินาที
-    const interval = setInterval(() => {
+    // Auto-refresh logs และ clear stuck jobs ทุก 30 วินาที
+    const interval = setInterval(async () => {
+      await fetch('/api/cron-jobs/auto-clear');
       loadCronLogs();
+      loadCronJobs();
     }, 30000);
     
     return () => clearInterval(interval);
