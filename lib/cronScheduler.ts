@@ -66,7 +66,12 @@ async function executeSyncJob(job: CronJob) {
     logId = logResult.insertedId;
     
     // เรียก sync API พร้อม timeout
-    const apiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/sync-table`;
+    // ใช้ APP_URL จาก .env หรือ fallback เป็น localhost
+    const baseUrl = process.env.APP_URL || 
+                    process.env.NEXT_PUBLIC_APP_URL || 
+                    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 
+                    'http://localhost:3000';
+    const apiUrl = `${baseUrl}/api/sync-table`;
     console.log(`[Cron] Calling API: ${apiUrl}`);
     
     // สร้าง timeout promise
