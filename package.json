@@ -7,16 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "node app.js",
-    "postinstall": "node setup.js",
-    "lint": "next lint",
-    "migrate": "node scripts/migrate.js",
-    "pm2:start": "npx pm2 start app.js --name sheets-sync",
-    "pm2:stop": "npx pm2 stop sheets-sync",
-    "pm2:restart": "npx pm2 restart sheets-sync",
-    "pm2:logs": "npx pm2 logs sheets-sync",
-    "pm2:list": "npx pm2 list",
-    "pm2:delete": "npx pm2 delete sheets-sync",
-    "test:health": "curl http://localhost:3000/api/health || wget -O- http://localhost:3000/api/health"
+    "lint": "next lint"
   },
   "dependencies": {
     "@types/node-cron": "^3.0.11",
