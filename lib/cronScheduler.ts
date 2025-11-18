@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import { getMongoDb } from './mongoDb';
+import { performSync } from './syncService';
 
 interface CronJob {
   _id: any;
@@ -65,36 +66,29 @@ async function executeSyncJob(job: CronJob) {
     });
     logId = logResult.insertedId;
     
-    // เรียก sync API - บน Plesk ต้องใช้ full URL เพราะไม่มี localhost port
-    const baseUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const apiUrl = `${baseUrl}/api/sync-table`;
-    console.log(`[Cron] 📡 Calling API: ${apiUrl}`);
-    console.log(`[Cron] 🔧 BASE_URL: ${baseUrl}`);
+    // เรียก sync service โดยตรง (ไม่ใช้ HTTP fetch)
+    console.log(`[Cron] 🔧 Calling sync service directly for table: ${job.table}`);
     
     // สร้าง timeout promise
     const timeoutPromise = new Promise((_, reject) => 
       setTimeout(() => reject(new Error('Job timeout after 10 minutes')), TIMEOUT_MS)
     );
     
-    const fetchPromise = fetch(apiUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        dataset: process.env.DATABASE_NAME || 'sheets_sync',
-        tableName: job.table
-      })
+    const syncPromise = performSync({
+      dataset: process.env.DATABASE_NAME || 'sheets_sync',
+      tableName: job.table,
+      forceSync: false
     });
     
-    // Race between fetch and timeout
-    const response = await Promise.race([fetchPromise, timeoutPromise]) as Response;
+    // Race between sync and timeout
+    const result = await Promise.race([syncPromise, timeoutPromise]) as Awaited<ReturnType<typeof performSync>>;
     
-    const data = await response.json();
-    console.log(`[Cron] API response for ${job.name}:`, data);
+    console.log(`[Cron] Sync result for ${job.name}:`, result);
     
     const endTime = new Date();
     const duration = endTime.getTime() - startTime.getTime();
     
-    if (response.ok) {
+    if (result.success) {
       console.log(`[Cron] ✓ Job completed successfully: ${job.name} (${duration}ms)`);
       
       // อัพเดท log เป็น success
@@ -106,7 +100,7 @@ async function executeSyncJob(job: CronJob) {
             completed_at: endTime,
             duration_ms: duration,
             message: `Job completed successfully`,
-            result: data,
+            result: result.stats,
             updated_at: endTime
           }
         }
@@ -124,7 +118,7 @@ async function executeSyncJob(job: CronJob) {
         }
       );
     } else {
-      throw new Error(data.error || 'Sync failed');
+      throw new Error(result.error || 'Sync failed');
     }
   } catch (error: any) {
     const endTime = new Date();

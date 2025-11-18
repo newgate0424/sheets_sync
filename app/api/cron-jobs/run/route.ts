@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getMongoDb } from '@/lib/mongoDb';
 import { ObjectId } from 'mongodb';
+import { performSync } from '@/lib/syncService';
 
 // POST - รัน cron job ทันที
 export async function POST(request: NextRequest) {
@@ -39,24 +40,16 @@ export async function POST(request: NextRequest) {
     );
     
     try {
-      // เรียก sync API - บน Plesk ต้องใช้ full URL
-      const baseUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-      const apiUrl = `${baseUrl}/api/sync-table`;
-      console.log(`[Run Job] Calling API: ${apiUrl} for table: ${job.table}`);
-      console.log(`[Run Job] Using BASE_URL: ${baseUrl}`);
+      // เรียก sync service โดยตรง (ไม่ใช้ HTTP fetch)
+      console.log(`[Run Job] Calling sync service directly for table: ${job.table}`);
       
-      const syncResponse = await fetch(apiUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dataset: process.env.DATABASE_NAME || 'sheets_sync',
-          tableName: job.table
-        })
+      const result = await performSync({
+        dataset: process.env.DATABASE_NAME || 'sheets_sync',
+        tableName: job.table,
+        forceSync: false
       });
       
-      const syncData = await syncResponse.json();
-      
-      if (syncResponse.ok) {
+      if (result.success) {
         // อัพเดทสถานะเป็น success
         await db.collection('cron_jobs').updateOne(
           { _id: new ObjectId(jobId) },
@@ -72,10 +65,10 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ 
           success: true, 
           message: 'Job executed successfully',
-          data: syncData
+          data: result.stats
         });
       } else {
-        throw new Error(syncData.error || 'Sync failed');
+        throw new Error(result.error || 'Sync failed');
       }
     } catch (syncError: any) {
       console.error('[Run Job] Sync error:', syncError);
