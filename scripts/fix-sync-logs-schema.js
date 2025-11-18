@@ -5,7 +5,7 @@ async function fixSyncLogsSchema() {
     host: process.env.DB_HOST || '147.50.228.21',
     port: process.env.DB_PORT || 3306,
     user: process.env.DB_USER || 'adsthcom_connect',
-    password: process.env.DB_PASSWORD || 'Z5N6CwbC*PYKJc9',
+    password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME || 'adsthcom_connect'
   });
 

@@ -12,7 +12,8 @@ async function createAdmin() {
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR(255)');
     console.log('✓ Checked users table schema');
     
-    const hashedPassword = await bcrypt.hash('admin123', 10);
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+    const hashedPassword = await bcrypt.hash(adminPassword, 10);
     
     await pool.query(
       `INSERT INTO users (username, password, full_name, role) 
@@ -22,9 +23,9 @@ async function createAdmin() {
       ['admin', hashedPassword, 'ผู้ดูแลระบบ', 'admin']
     );
     
-    console.log('✓ Admin user created!');
+    console.log('✓ Admin user created');
     console.log('  Username: admin');
-    console.log('  Password: admin123');
+    console.log('  Password:', process.env.ADMIN_PASSWORD || 'admin123');
     
   } catch (error) {
     console.error('Error:', error.message);

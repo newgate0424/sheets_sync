@@ -1,7 +1,12 @@
 const { Pool } = require('pg');
 
+if (!process.env.DATABASE_URL) {
+  console.error('❌ Error: DATABASE_URL environment variable is not set!');
+  process.exit(1);
+}
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:NewStrongPassword123!@127.0.0.1:5432/ads_data',
+  connectionString: process.env.DATABASE_URL,
   ssl: false
 });
 
