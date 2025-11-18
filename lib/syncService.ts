@@ -45,13 +45,6 @@ export async function performSync(params: SyncParams): Promise<SyncResult> {
     
     const pool = await ensureDbInitialized();
 
-    // สร้าง log entry  
-    const logResult = await pool.query(
-      'INSERT INTO sync_logs (status, table_name) VALUES ($1, $2) RETURNING id',
-      ['running', tableName]
-    );
-    logId = logResult.rows[0].id;
-
     // ดึง sync config
     const configs = await pool.query(
       'SELECT * FROM sync_config WHERE table_name = $1',
@@ -63,6 +56,15 @@ export async function performSync(params: SyncParams): Promise<SyncResult> {
     }
 
     const config = configs.rows[0];
+    
+    // สร้าง log entry with complete info
+    const logResult = await pool.query(
+      `INSERT INTO sync_logs (status, table_name, folder_name, spreadsheet_id, sheet_name, started_at) 
+       VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING id`,
+      ['running', tableName, config.folder_name, config.spreadsheet_id, config.sheet_name]
+    );
+    logId = logResult.rows[0].id;
+    
     const sheets = await getGoogleSheetsClient();
 
     // ดึงข้อมูลจาก Google Sheets
@@ -114,9 +116,10 @@ export async function performSync(params: SyncParams): Promise<SyncResult> {
       const duration = Math.floor((Date.now() - startTime) / 1000);
       await pool.query(
         `UPDATE sync_logs 
-         SET status = $1, completed_at = NOW(), sync_duration = $2, rows_inserted = $3
-         WHERE id = $4`,
-        ['success', duration, insertedCount, logId]
+         SET status = $1, completed_at = NOW(), sync_duration = $2, 
+             rows_synced = $3, rows_inserted = $4, rows_updated = $5, rows_deleted = $6
+         WHERE id = $7`,
+        ['success', duration, dataRows.length, insertedCount, 0, 0, logId]
       );
     }
 
