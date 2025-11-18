@@ -1,8 +1,8 @@
 # Next.js Google Sheets Sync Manager
 
-เว็บไซต์จัดการซิงค์ข้อมูลจาก Google Sheets ไปยังฐานข้อมูล (MySQL/PostgreSQL/MongoDB)
+เว็บไซต์จัดการซิงค์ข้อมูลจาก Google Sheets ไปยังฐานข้อมูล (MySQL/PostgreSQL) พร้อมระบบ Cron Jobs อัตโนมัติ
 
-## 🚀 Quick Start (ติดตั้งแล้วใช้ได้เลย)
+## 🚀 Quick Start
 
 ```bash
 # 1. ติดตั้ง
@@ -11,77 +11,95 @@ npm install
 # 2. Build
 npm run build
 
-# 3. รัน
+# 3. รัน (Production)
 npm start
 
-# 4. เข้าใช้งาน
-# เปิด: http://localhost:3000
-# Login: admin / admin123
+# หรือ Dev mode
+npm run dev
 ```
 
-**เท่านี้ก็ใช้งานได้แล้ว!** 🎉
+**Default Login:**
+- URL: `http://localhost:3000`
+- Username: `admin`
+- Password: `admin123`
 
 ---
 
-## ✨ ฟีเจอร์
+## ✨ ฟีเจอร์หลัก
 
-## ✨ ฟีเจอร์
+### Core Features
+- ✅ **Google Sheets Sync** - ซิงค์ข้อมูลอัตโนมัติ
+- ✅ **Smart Checksum** - ประหยัด API quota 80-95%
+- ✅ **Cron Scheduler** - กำหนดเวลา sync อัตโนมัติ
+- ✅ **Multi-Database** - รองรับ MySQL และ PostgreSQL
+- ✅ **Folder Management** - จัดกลุ่มตาราง
+- ✅ **Real-time Monitoring** - ติดตามสถานะแบบเรียลไทม์
+- ✅ **User Authentication** - ระบบ login/logout
+- ✅ **Auto Migration** - อัปเดต schema อัตโนมัติ
 
-- ✅ ซิงค์ข้อมูลจาก Google Sheets อัตโนมัติ
-- ✅ รองรับ MySQL, PostgreSQL และ MongoDB
-- ✅ Cron Jobs สำหรับ scheduled sync
-- ✅ User Management และ Authentication
+### Optimization Features
+- 🚀 **API Quota Saving** - ลด Google API calls 80-95%
+- 🚀 **Checksum Validation** - ตรวจสอบก่อน sync
+- 🚀 **Smart Skip** - ข้ามถ้าข้อมูลไม่เปลี่ยน
+- 🚀 **Batch Processing** - ประมวลผล 50,000 แถว/ครั้ง
+- 🚀 **Connection Pooling** - จัดการ connection อัตโนมัติ
 
-## การติดตั้ง
+### Production Ready
+- ✅ **Plesk Passenger** - รองรับ Plesk Obsidian
+- ✅ **Timeout Protection** - ป้องกัน job ค้าง (10 นาที)
+- ✅ **Auto-clear Stuck Jobs** - ล้าง job ค้างอัตโนมัติ (>15 นาที)
+- ✅ **Comprehensive Logging** - บันทึก log ครบถ้วน
+- ✅ **Error Tracking** - ติดตาม error แบบละเอียด
 
-1. Install dependencies:
+---
+
+## 📦 การติดตั้ง
+
+### 1. Clone และ Install
 ```bash
+git clone https://github.com/newgate0424/sheets_sync.git
+cd sheets_sync
 npm install
 ```
 
-ระบบจะสร้างไฟล์ `.env` อัตโนมัติพร้อมค่า default
-
-#### 2. ตั้งค่าฐานข้อมูล (Optional)
+### 2. ตั้งค่า Environment Variables
 
 แก้ไขไฟล์ `.env`:
 
 ```env
-# MongoDB (สำหรับ user management)
+# MongoDB (User Management & Cron Jobs)
 MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/sheets_sync
 DATABASE_USER_URL=mongodb+srv://user:pass@cluster.mongodb.net/sheets_sync
 
-# MySQL/PostgreSQL (สำหรับเก็บข้อมูล)
-DATABASE_URL=mysql://user:password@localhost:3306/database
+# MySQL/PostgreSQL (Data Storage)
+DATABASE_URL=mysql://user:password@host:3306/database
+# หรือ
+DATABASE_URL=postgresql://user:password@host:5432/database
+
+# App URL (สำหรับ production)
+APP_URL=https://your-domain.com
 ```
 
-**หมายเหตุ**: ถ้าไม่ตั้งค่า แอพจะรันในโหมด development (ข้อมูลไม่ persist)
+### 3. Google Sheets API Setup
 
-#### 3. Google Sheets API (Optional)
+1. ไปที่ [Google Cloud Console](https://console.cloud.google.com/)
+2. สร้าง project และเปิด Google Sheets API
+3. สร้าง Service Account
+4. Download `credentials.json`
+5. วางไฟล์ที่ root ของโปรเจค
 
-1. Download `credentials.json` จาก [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
-2. วางไฟล์ที่ root ของโปรเจค
+### 4. Build และรัน
 
-**หมายเหตุ**: ถ้าไม่มี Google Sheets sync จะใช้ไม่ได้ แต่แอพยังรันได้ปกติ
-
-#### 4. Build และ Run
 ```bash
 # Build
 npm run build
 
-# Development mode
-npm run dev
-
-# Production mode
+# Production
 npm start
+
+# Development
+npm run dev
 ```
-
-#### 5. เข้าใช้งาน
-
-เปิดเบราว์เซอร์: **http://localhost:3000**
-
-**Default Login:**
-- Username: `admin`
-- Password: `admin123`
 
 ---
 
@@ -90,7 +108,7 @@ npm start
 ### Plesk Obsidian
 ดูคู่มือใน **[PLESK_DEPLOYMENT.md](PLESK_DEPLOYMENT.md)**
 
-### Production Server
+### Production Server  
 ดูคู่มือใน **[PRODUCTION_DEPLOY.md](PRODUCTION_DEPLOY.md)**
 
 ---
@@ -100,83 +118,118 @@ npm start
 ```
 ├── app/
 │   ├── layout.tsx              # Main layout
-│   ├── page.tsx                # Home page
+│   ├── page.tsx                # Home page (redirect to /database)
 │   ├── api/                    # API Routes
-│   │   ├── auth/              # Authentication
+│   │   ├── auth/              # Authentication (login/logout/session)
 │   │   ├── sync-table/        # Google Sheets sync
+│   │   ├── sync-logs/         # Sync logs
 │   │   ├── cron-jobs/         # Cron management
-│   │   └── ...                # Other APIs
-│   ├── database/              # Database explorer
+│   │   ├── dashboard/         # Dashboard stats
+│   │   ├── datasets/          # Database datasets
+│   │   ├── folders/           # Folder management
+│   │   ├── query/             # SQL query execution
+│   │   └── users/             # User management
+│   ├── database/              # Database explorer page
 │   ├── cron/                  # Cron jobs page
-│   ├── users/                 # User management
+│   ├── log/                   # Sync logs page
+│   ├── dashboard/             # Dashboard page
+│   ├── users/                 # User management page
 │   └── settings/              # Settings page
 ├── lib/
-│   ├── db.ts                  # Database connection
-│   ├── dbAdapter.ts           # Multi-DB adapter
+│   ├── dbAdapter.ts           # Multi-DB adapter (MySQL/PostgreSQL)
+│   ├── syncService.ts         # Core sync service (with checksum)
 │   ├── mongoDb.ts             # MongoDB connection
-│   ├── googleSheets.ts        # Google Sheets API
-│   └── cronScheduler.ts       # Cron scheduler
+│   ├── googleSheets.ts        # Google Sheets API client
+│   ├── cronScheduler.ts       # Cron scheduler (direct calls)
+│   ├── initCron.ts            # Initialize cron on startup
+│   └── autoMigration.ts       # Auto database migration
 ├── components/
-│   ├── Header.tsx             # Header component
-│   └── Sidebar.tsx            # Sidebar component
-├── scripts/                   # Utility scripts
-├── .env                       # Environment variables (auto-created)
-├── credentials.json           # Google API credentials (optional)
-├── app.js                     # Production server
-└── setup.js                   # Auto-setup script
+│   ├── Header.tsx             # Top navigation bar
+│   └── Sidebar.tsx            # Side navigation menu
+├── scripts/                   # Admin utility scripts
+│   ├── create-admin.js        # สร้าง admin user
+│   ├── create-mongodb-admin.js # สร้าง MongoDB admin
+│   ├── setup-mongodb.js       # Setup MongoDB collections
+│   └── create-indexes.js      # สร้าง database indexes
+├── docs/                      # Documentation
+│   ├── API_QUOTA_OPTIMIZATION.md
+│   └── SYSTEM_TEST_REPORT.md
+├── .env                       # Environment variables
+├── .env.example               # Example environment config
+├── credentials.json           # Google API credentials
+├── app.js                     # Custom server (Passenger-compatible)
+├── middleware.ts              # Next.js middleware (auth)
+├── .plesk-deploy.sh           # Plesk auto-deploy script
+└── passenger.js               # Passenger startup file
 ```
 
 ---
 
-## 🔧 Scripts
+## 🔧 Available Scripts
 
 ```bash
-npm run dev          # Development mode
+# Development
+npm run dev          # Start development server (localhost:3000)
 npm run build        # Build for production
-npm start            # Production mode
-npm run lint         # Lint code
+npm run lint         # Run ESLint
 
-# PM2 (Process Manager)
-npm run pm2:start    # Start with PM2
-npm run pm2:stop     # Stop
-npm run pm2:restart  # Restart
-npm run pm2:logs     # View logs
+# Production
+npm start            # Start production server
+
+# Database
+node scripts/create-admin.js              # สร้าง admin user ใน MongoDB
+node scripts/create-mongodb-admin.js      # สร้าง MongoDB admin
+node scripts/setup-mongodb.js             # Setup MongoDB collections
+node scripts/create-indexes.js            # สร้าง database indexes
 ```
 
 ---
 
 ## ⚙️ Environment Variables
 
-สร้างไฟล์ `.env` (จะถูกสร้างอัตโนมัติหลัง npm install):
+สร้างไฟล์ `.env` หรือใช้ `.env.example` เป็นแม่แบบ:
 
 ```env
-# MongoDB (User Management)
+# MongoDB (User Management & Cron Jobs)
 MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/sheets_sync
 DATABASE_USER_URL=mongodb+srv://user:pass@cluster.mongodb.net/sheets_sync
 
-# Database (Data Storage)
-DATABASE_URL=mysql://user:password@localhost:3306/database
+# MySQL/PostgreSQL (Data Storage)
+DATABASE_URL=mysql://user:password@host:3306/database
+# หรือ
+# DATABASE_URL=postgresql://user:password@host:5432/database
 
-# Security Tokens
-CRON_SYNC_TOKEN=your_secure_random_token
-NEXT_PUBLIC_CRON_TOKEN=your_public_token
-
-# Admin Account
-ADMIN_PASSWORD=your_strong_password
-
-# Server
+# App Configuration
+APP_URL=https://your-domain.com
 NODE_ENV=production
 PORT=3000
+
+# Security (ปล่อยว่างไว้ได้ ระบบจะสร้างให้)
+CRON_SYNC_TOKEN=
+NEXT_PUBLIC_CRON_TOKEN=
+ADMIN_PASSWORD=
 ```
+
+**หมายเหตุ:** ไม่ต้องกรอก `CRON_SYNC_TOKEN`, `NEXT_PUBLIC_CRON_TOKEN`, และ `ADMIN_PASSWORD` ระบบจะสร้างอัตโนมัติ
 
 ---
 
 ## 📚 Documentation
 
-- **[QUICK_START.md](QUICK_START.md)** - เริ่มใช้งานเร็ว (แนะนำ)
-- **[PLESK_DEPLOYMENT.md](PLESK_DEPLOYMENT.md)** - Deploy บน Plesk
-- **[PRODUCTION_DEPLOY.md](PRODUCTION_DEPLOY.md)** - Deploy Production
-- **[PLESK_CHECKLIST.md](PLESK_CHECKLIST.md)** - Checklist สำหรับ Plesk
+### Quick Start
+- **[QUICK_START.md](QUICK_START.md)** - เริ่มต้นใช้งานอย่างรวดเร็ว
+
+### Deployment
+- **[PLESK_DEPLOYMENT.md](PLESK_DEPLOYMENT.md)** - Deploy บน Plesk Obsidian
+- **[PRODUCTION_DEPLOY.md](PRODUCTION_DEPLOY.md)** - Deploy บน Production Server
+- **[PASSENGER_TROUBLESHOOT.md](PASSENGER_TROUBLESHOOT.md)** - แก้ปัญหา Passenger
+
+### System Status
+- **[SYSTEM_STATUS.md](SYSTEM_STATUS.md)** - สถานะระบบและ optimization
+
+### Technical Docs
+- **[docs/API_QUOTA_OPTIMIZATION.md](docs/API_QUOTA_OPTIMIZATION.md)** - การประหยัด API Quota
+- **[docs/SYSTEM_TEST_REPORT.md](docs/SYSTEM_TEST_REPORT.md)** - รายงานการทดสอบ
 
 ---
 
@@ -206,21 +259,64 @@ Download จาก Google Cloud Console แล้ววางที่ root
 
 ---
 
-## 🔒 Security
+## 🔒 Security Best Practices
 
-- เปลี่ยน `ADMIN_PASSWORD` ใน production
-- ใช้ strong tokens สำหรับ `CRON_SYNC_TOKEN`
-- ตั้งค่า file permissions: `chmod 600 .env credentials.json`
-- Enable HTTPS สำหรับ production
+- ✅ เปลี่ยน `ADMIN_PASSWORD` ใน production
+- ✅ ใช้ strong tokens สำหรับ `CRON_SYNC_TOKEN`
+- ✅ ตั้งค่า file permissions: `chmod 600 .env credentials.json`
+- ✅ Enable HTTPS สำหรับ production
+- ✅ อัปเดต dependencies เป็นประจำ: `npm update`
+- ✅ Backup database เป็นประจำ
 
 ---
 
-## 📞 Support
+## 🎯 System Performance
+
+### API Quota Optimization
+- **Smart Checksum**: ประหยัด Google Sheets API calls **80-95%**
+- **Sample-based Detection**: ตรวจสอบ 3 แถว แทนการดึงทั้งหมด
+- **Smart Skip**: ข้าม sync ถ้าข้อมูลไม่เปลี่ยนแปลง
+
+### Sync Performance
+- **Batch Processing**: ประมวลผล 50,000 แถว/ครั้ง
+- **Connection Pooling**: จัดการ connections อย่างมีประสิทธิภาพ
+- **Transaction Safety**: COMMIT/ROLLBACK อัตโนมัติ
+- **Timeout Protection**: ป้องกัน job ค้าง (10 นาที)
+
+### Monitoring
+- **Real-time Logs**: Auto-refresh ทุก 2 วินาที
+- **Dashboard Stats**: Auto-refresh ทุก 5 วินาที
+- **Database View**: Auto-refresh ทุก 10 วินาที
+
+---
+
+## 📊 Tech Stack
+
+- **Framework**: Next.js 14.2.33
+- **UI**: TailwindCSS + Lucide Icons
+- **Database**: MySQL/PostgreSQL (data), MongoDB (users/cron)
+- **Authentication**: Custom JWT-based
+- **Cron**: Node-cron
+- **Google API**: googleapis
+- **Server**: Phusion Passenger (production)
+
+---
+
+## 📞 Support & Contributing
 
 - **Issues**: [GitHub Issues](https://github.com/newgate0424/sheets_sync/issues)
+- **Pull Requests**: Welcome!
 - **Documentation**: อ่านไฟล์ `.md` ในโปรเจค
 
 ---
+
+## 📝 License
+
+MIT License - ใช้งานได้อย่างอิสระ
+
+---
+
+**Made with ❤️ for efficient Google Sheets synchronization**
 
 ## 📄 License
 
