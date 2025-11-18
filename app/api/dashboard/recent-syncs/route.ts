@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const { getMongoDb } = await import('@/lib/mongoDb');
@@ -21,7 +23,7 @@ export async function GET() {
       duration: sync.duration || null
     }));
 
-    return NextResponse.json({ syncs: formattedSyncs });
+    return NextResponse.json({ syncs: formattedSyncs }, {\n      headers: {\n        'Cache-Control': 'no-cache, no-store, must-revalidate',\n        'Pragma': 'no-cache',\n        'Expires': '0'\n      }\n    });
   } catch (error: any) {
     console.error('Error fetching recent syncs:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

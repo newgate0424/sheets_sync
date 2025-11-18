@@ -27,6 +27,12 @@ export async function GET() {
         id: j._id.toString(),
         _id: undefined 
       }))
+    }, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
     });
   } catch (error: any) {
     console.error('Database error:', error);

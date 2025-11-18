@@ -75,12 +75,12 @@ export default function CronPage() {
     
     initializeData();
     
-    // Auto-refresh logs และ clear stuck jobs ทุก 30 วินาที
+    // Auto-refresh logs และ clear stuck jobs ทุก 5 วินาที
     const interval = setInterval(async () => {
       await fetch('/api/cron-jobs/auto-clear');
       loadCronLogs();
       loadCronJobs();
-    }, 30000);
+    }, 5000);
     
     return () => clearInterval(interval);
   }, []);

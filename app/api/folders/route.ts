@@ -3,6 +3,8 @@ import { getMongoDb } from '@/lib/mongoDb';
 import { ObjectId } from 'mongodb';
 import { ensureDbInitialized } from '@/lib/dbAdapter';
 
+export const dynamic = 'force-dynamic';
+
 // GET - ดึงโฟลเดอร์ทั้งหมด
 export async function GET() {
   try {
@@ -13,6 +15,12 @@ export async function GET() {
     return NextResponse.json({ 
       folders: folders.map(f => ({ ...f, id: f._id.toString() })), 
       folderTables: folderTables.map(ft => ({ ...ft, id: ft._id.toString() }))
+    }, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
     });
   } catch (error: any) {
     console.error('Database error:', error);

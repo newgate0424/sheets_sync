@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { ensureDbInitialized } from '@/lib/dbAdapter';
 import { getMongoDb } from '@/lib/mongoDb';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const pool = await ensureDbInitialized();
@@ -111,7 +113,7 @@ export async function GET() {
       expanded: false,
     }];
     
-    return NextResponse.json(datasets);
+    return NextResponse.json(datasets, {\n      headers: {\n        'Cache-Control': 'no-cache, no-store, must-revalidate',\n        'Pragma': 'no-cache',\n        'Expires': '0'\n      }\n    }); 
   } catch (error: any) {
     console.error('Database error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

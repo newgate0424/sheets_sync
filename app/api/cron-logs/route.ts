@@ -47,6 +47,12 @@ export async function GET(request: NextRequest) {
         _id: undefined,
         job_id: log.job_id?.toString()
       }))
+    }, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
     });
   } catch (error: any) {
     console.error('Database error:', error);

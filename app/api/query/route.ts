@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ensureDbInitialized } from '@/lib/dbAdapter';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     const pool = await ensureDbInitialized();

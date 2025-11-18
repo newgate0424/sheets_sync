@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { ensureDbInitialized } from '@/lib/dbAdapter';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const pool = await ensureDbInitialized();
@@ -136,6 +138,12 @@ export async function GET() {
       syncsToday,
       syncsThisWeek,
       syncsThisMonth
+    }, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
     });
   } catch (error: any) {
     console.error('Error fetching dashboard stats:', error);

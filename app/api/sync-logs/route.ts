@@ -25,7 +25,13 @@ export async function GET() {
       LIMIT 100
     `);
     
-    return NextResponse.json(result.rows);
+    return NextResponse.json(result.rows, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
+    });
   } catch (error: any) {
     console.error('Error fetching sync logs:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
