@@ -112,14 +112,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Dataset and table name are required' }, { status: 400 });
     }
 
-    // สร้าง log entry
-    const logResult = await pool.query(
-      'INSERT INTO sync_logs (status, table_name) VALUES ($1, $2) RETURNING id',
-      ['running', tableName]
-    );
-    logId = logResult.rows[0].id;
-
-    // ดึง sync config
+    // ดึง sync config ก่อนเพื่อเอาข้อมูล folder, spreadsheet
     const configs = await pool.query(
       'SELECT * FROM sync_config WHERE table_name = $1',
       [tableName]
@@ -130,6 +123,15 @@ export async function PUT(request: NextRequest) {
     }
 
     const config = configs.rows[0];
+
+    // สร้าง log entry with complete info
+    const logResult = await pool.query(
+      `INSERT INTO sync_logs (status, table_name, folder_name, spreadsheet_id, sheet_name, started_at) 
+       VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING id`,
+      ['running', tableName, config.folder_name, config.spreadsheet_id, config.sheet_name]
+    );
+    logId = logResult.rows[0].id;
+
     const sheets = await getGoogleSheetsClient();
 
     // ใช้ค่า start_row และ has_header จาก config (default: 1, true)

@@ -84,6 +84,10 @@ export async function performSync(params: SyncParams): Promise<SyncResult> {
 
     console.log(`[Sync Service] Processing ${dataRows.length} rows`);
 
+    // นับจำนวนแถวเก่าเพื่อคำนวณ inserted/updated/deleted
+    const oldCountResult = await pool.query(`SELECT COUNT(*) as count FROM "${tableName}"`);
+    const oldRowCount = parseInt(oldCountResult.rows[0]?.count || 0);
+
     // Simple sync logic - truncate และ insert ใหม่
     await pool.query(`TRUNCATE TABLE "${tableName}"`);
     
@@ -111,6 +115,24 @@ export async function performSync(params: SyncParams): Promise<SyncResult> {
       }
     }
 
+    // คำนวณ inserted/updated/deleted เหมือน /api/sync-table
+    let finalInserted = 0;
+    let finalUpdated = 0;
+    let finalDeleted = 0;
+    
+    if (dataRows.length > oldRowCount) {
+      // มีแถวเพิ่มขึ้น = updated เก่า + inserted ใหม่
+      finalUpdated = oldRowCount;
+      finalInserted = dataRows.length - oldRowCount;
+    } else if (dataRows.length < oldRowCount) {
+      // แถวลดลง = updated + deleted
+      finalUpdated = dataRows.length;
+      finalDeleted = oldRowCount - dataRows.length;
+    } else {
+      // จำนวนเท่าเดิม = updated ทั้งหมด
+      finalUpdated = dataRows.length;
+    }
+
     // อัพเดท log - success
     if (logId) {
       const duration = Math.floor((Date.now() - startTime) / 1000);
@@ -119,19 +141,19 @@ export async function performSync(params: SyncParams): Promise<SyncResult> {
          SET status = $1, completed_at = NOW(), sync_duration = $2, 
              rows_synced = $3, rows_inserted = $4, rows_updated = $5, rows_deleted = $6
          WHERE id = $7`,
-        ['success', duration, dataRows.length, insertedCount, 0, 0, logId]
+        ['success', duration, dataRows.length, finalInserted, finalUpdated, finalDeleted, logId]
       );
     }
 
-    console.log(`[Sync Service] ✓ Completed: ${insertedCount} rows inserted`);
+    console.log(`[Sync Service] ✓ Completed: ${finalInserted} inserted, ${finalUpdated} updated, ${finalDeleted} deleted`);
 
     return {
       success: true,
       message: 'Sync completed successfully',
       stats: {
-        inserted: insertedCount,
-        updated: 0,
-        deleted: 0,
+        inserted: finalInserted,
+        updated: finalUpdated,
+        deleted: finalDeleted,
         total: dataRows.length
       }
     };
