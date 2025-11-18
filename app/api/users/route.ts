@@ -15,6 +15,9 @@ function getSession(request: NextRequest) {
 }
 
 // GET - ดึงรายชื่อ users (เฉพาะ admin)
+// Force dynamic rendering to prevent build-time execution
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const session = getSession(request);

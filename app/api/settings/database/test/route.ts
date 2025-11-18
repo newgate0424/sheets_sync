@@ -3,6 +3,9 @@ import { Pool as PgPool } from 'pg';
 import mysql from 'mysql2/promise';
 
 // POST - ทดสอบการเชื่อมต่อฐานข้อมูล
+// Force dynamic rendering to prevent build-time execution
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     const { connectionString, dbType } = await request.json();

@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ensureDbInitialized } from '@/lib/dbAdapter';
 
 // GET - ดึงโฟลเดอร์ทั้งหมด
+// Force dynamic rendering to prevent build-time execution
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const pool = await ensureDbInitialized();

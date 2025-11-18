@@ -168,6 +168,9 @@ function getCreateTableSQL(tableName: string, dbType: 'mysql' | 'postgresql'): s
   return isPostgres ? table.postgres : table.mysql;
 }
 
+// Force dynamic rendering to prevent build-time execution
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   let tempAdapter: DatabaseAdapter | null = null;
   
