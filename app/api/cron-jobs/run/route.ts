@@ -104,6 +104,15 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error('[Run Job] Fatal error:', error);
     console.error('[Run Job] Error stack:', error.stack);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    
+    return NextResponse.json({ 
+      success: false,
+      error: error.message || 'Unknown error',
+      details: {
+        name: error.name,
+        code: error.code,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      }
+    }, { status: 500 });
   }
 }

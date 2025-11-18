@@ -279,16 +279,21 @@ export default function CronPage() {
       const data = await response.json();
       
       if (response.ok) {
-        alert(`Job "${job.name}" executed successfully!`);
+        alert(`✅ Job "${job.name}" executed successfully!`);
       } else {
-        alert(`Failed to run job: ${data.error}`);
+        // แสดง error message ที่ละเอียด
+        const errorMsg = data.details 
+          ? `Error: ${data.error}\nDetails: ${JSON.stringify(data.details, null, 2)}`
+          : `Error: ${data.error || 'Unknown error'}`;
+        alert(`❌ Failed to run job "${job.name}":\n\n${errorMsg}`);
+        console.error('Job execution error:', data);
       }
       
       // โหลดข้อมูลใหม่
       loadCronJobs();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error running job:', error);
-      alert('Failed to run job');
+      alert(`❌ Network error: ${error.message}\n\nCannot connect to API. Check if the application is running.`);
       loadCronJobs();
     }
   };
