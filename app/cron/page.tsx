@@ -37,6 +37,7 @@ export default function CronPage() {
   const [cronLogs, setCronLogs] = useState<CronLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshingLogs, setRefreshingLogs] = useState(false);
   const [showDialog, setShowDialog] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
@@ -108,8 +109,9 @@ export default function CronPage() {
     }
   };
 
-  const loadCronLogs = async (jobId?: string) => {
+  const loadCronLogs = async (jobId?: string, showRefresh = false) => {
     try {
+      if (showRefresh) setRefreshingLogs(true);
       const url = jobId
         ? `/api/cron-logs?jobId=${jobId}&limit=50`
         : '/api/cron-logs?limit=100';
@@ -122,6 +124,10 @@ export default function CronPage() {
       }
     } catch (error) {
       console.error('Error loading cron logs:', error);
+    } finally {
+      if (showRefresh) {
+        setTimeout(() => setRefreshingLogs(false), 500);
+      }
     }
   };
 
@@ -655,17 +661,18 @@ export default function CronPage() {
             <button
               onClick={() => {
                 setSelectedJobId(null);
-                loadCronLogs();
+                loadCronLogs(undefined, false);
               }}
               className="px-3 py-1 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
             >
               All Jobs
             </button>
             <button
-              onClick={() => loadCronLogs(selectedJobId || undefined)}
-              className="px-3 py-1 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              onClick={() => loadCronLogs(selectedJobId || undefined, true)}
+              disabled={refreshingLogs}
+              className="px-3 py-1 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-1"
             >
-              <RefreshCw className="w-4 h-4 inline mr-1" />
+              <RefreshCw className={`w-4 h-4 ${refreshingLogs ? 'animate-spin' : ''}`} />
               Refresh
             </button>
           </div>
