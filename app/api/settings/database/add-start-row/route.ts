@@ -32,28 +32,46 @@ export async function GET(request: NextRequest) {
       `);
       
       // MySQL returns array of arrays: [[rows], [fields]]
-      const columns = result[0] || result;
+      const columns = Array.isArray(result[0]) ? result[0] : (Array.isArray(result) ? result : []);
       const existingColumns = columns.map((c: any) => c.COLUMN_NAME);
       
       if (!existingColumns.includes('start_row')) {
-        await pool.query(`
-          ALTER TABLE sync_config 
-          ADD COLUMN start_row INT DEFAULT 1 COMMENT 'แถวแรกที่เริ่มอ่านข้อมูล (1-indexed)'
-        `);
-        messages.push('✅ Added start_row column');
-        console.log('✅ Added start_row column');
+        try {
+          await pool.query(`
+            ALTER TABLE sync_config 
+            ADD COLUMN start_row INT DEFAULT 1 COMMENT 'แถวแรกที่เริ่มอ่านข้อมูล (1-indexed)'
+          `);
+          messages.push('✅ Added start_row column');
+          console.log('✅ Added start_row column');
+        } catch (err: any) {
+          if (err.code === 'ER_DUP_FIELDNAME') {
+            messages.push('⚠️  start_row column already exists');
+            console.log('⚠️  start_row column already exists');
+          } else {
+            throw err;
+          }
+        }
       } else {
         messages.push('⚠️  start_row column already exists');
         console.log('⚠️  start_row column already exists');
       }
       
       if (!existingColumns.includes('has_header')) {
-        await pool.query(`
-          ALTER TABLE sync_config 
-          ADD COLUMN has_header TINYINT(1) DEFAULT 1 COMMENT 'แถวแรกเป็น header หรือไม่ (1=ใช่, 0=ไม่)'
-        `);
-        messages.push('✅ Added has_header column');
-        console.log('✅ Added has_header column');
+        try {
+          await pool.query(`
+            ALTER TABLE sync_config 
+            ADD COLUMN has_header TINYINT(1) DEFAULT 1 COMMENT 'แถวแรกเป็น header หรือไม่ (1=ใช่, 0=ไม่)'
+          `);
+          messages.push('✅ Added has_header column');
+          console.log('✅ Added has_header column');
+        } catch (err: any) {
+          if (err.code === 'ER_DUP_FIELDNAME') {
+            messages.push('⚠️  has_header column already exists');
+            console.log('⚠️  has_header column already exists');
+          } else {
+            throw err;
+          }
+        }
       } else {
         messages.push('⚠️  has_header column already exists');
         console.log('⚠️  has_header column already exists');

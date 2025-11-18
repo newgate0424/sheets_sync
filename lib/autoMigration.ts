@@ -24,28 +24,44 @@ export async function ensureSyncConfigColumns() {
         AND COLUMN_NAME IN ('start_row', 'has_header')
       `);
       
-      // MySQL returns [rows, fields] - get first element
-      const rows = result[0] || [];
-      const existingColumns = Array.isArray(rows) ? rows.map((c: any) => c.COLUMN_NAME) : [];
+      // MySQL returns [rows, fields] - safely extract rows
+      const rows = Array.isArray(result[0]) ? result[0] : (Array.isArray(result) ? result : []);
+      const existingColumns = rows.map((c: any) => c.COLUMN_NAME);
       
       // Add start_row if missing
       if (!existingColumns.includes('start_row')) {
         console.log('[Migration] Adding start_row column to sync_config...');
-        await pool.query(`
-          ALTER TABLE sync_config 
-          ADD COLUMN start_row INT DEFAULT 1 COMMENT 'แถวแรกที่เริ่มอ่านข้อมูล (1-indexed)'
-        `);
-        console.log('[Migration] ✅ Added start_row column');
+        try {
+          await pool.query(`
+            ALTER TABLE sync_config 
+            ADD COLUMN start_row INT DEFAULT 1 COMMENT 'แถวแรกที่เริ่มอ่านข้อมูล (1-indexed)'
+          `);
+          console.log('[Migration] ✅ Added start_row column');
+        } catch (err: any) {
+          if (err.code === 'ER_DUP_FIELDNAME') {
+            console.log('[Migration] ⚠️  start_row column already exists');
+          } else {
+            throw err;
+          }
+        }
       }
       
       // Add has_header if missing
       if (!existingColumns.includes('has_header')) {
         console.log('[Migration] Adding has_header column to sync_config...');
-        await pool.query(`
-          ALTER TABLE sync_config 
-          ADD COLUMN has_header TINYINT(1) DEFAULT 1 COMMENT 'แถวแรกเป็น header หรือไม่'
-        `);
-        console.log('[Migration] ✅ Added has_header column');
+        try {
+          await pool.query(`
+            ALTER TABLE sync_config 
+            ADD COLUMN has_header TINYINT(1) DEFAULT 1 COMMENT 'แถวแรกเป็น header หรือไม่'
+          `);
+          console.log('[Migration] ✅ Added has_header column');
+        } catch (err: any) {
+          if (err.code === 'ER_DUP_FIELDNAME') {
+            console.log('[Migration] ⚠️  has_header column already exists');
+          } else {
+            throw err;
+          }
+        }
       }
       
     } else if (dbType === 'postgresql') {
